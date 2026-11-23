@@ -1,0 +1,27 @@
+{
+	"schemaVersion": 1,
+	"id": "meowlogger",
+	"version": "${version}",
+	"name": "MeowLogger",
+	"description": "Server-side block and action logger: inspect player actions in-game and roll back griefing.",
+	"authors": [
+		"ZaKyatto"
+	],
+	"license": "MIT",
+	"icon": "assets/meowlogger/icon.png",
+	"environment": "*",
+	"entrypoints": {
+		"main": [
+			"zakyatto.meowlogger.MeowLogger"
+		]
+	},
+	"mixins": [
+		"meowlogger.mixins.json"
+	],
+	"depends": {
+		"fabricloader": ">=0.20.1",
+		"minecraft": "~26.3",
+		"java": ">=25",
+		"fabric-api": "*"
+	}
+}
