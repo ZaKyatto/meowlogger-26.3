@@ -20,6 +20,8 @@ import net.minecraft.world.level.Level;
 import net.minecraft.world.level.block.Block;
 import net.minecraft.world.level.block.state.BlockState;
 
+import it.unimi.dsi.fastutil.longs.LongArrayList;
+
 import org.sqlite.SQLiteConfig;
 
 import zakyatto.meowlogger.action.ActionRecord;
@@ -61,11 +63,13 @@ public final class SqliteDatabase implements Database {
 			"CREATE INDEX actions_position ON actions (world_id, x, z, y)",
 			"CREATE INDEX actions_player ON actions (player_id, time)",
 			"CREATE INDEX actions_time ON actions (time)"
+	}, {
+			"ALTER TABLE actions ADD COLUMN rolled_back INTEGER NOT NULL DEFAULT 0"
 	}};
 	private static final int SCHEMA_VERSION = MIGRATIONS.length;
 
 	private static final String LOOKUP_COLUMNS = """
-			SELECT a.id, a.time, a.type, p.name, w.name, a.x, a.y, a.z, o.name, a.old_state, n.name, a.new_state
+			SELECT a.id, a.time, a.type, p.name, w.name, a.x, a.y, a.z, o.name, a.old_state, n.name, a.new_state, a.rolled_back
 			FROM actions a
 			JOIN players p ON p.id = a.player_id
 			JOIN worlds w ON w.id = a.world_id
@@ -180,6 +184,26 @@ public final class SqliteDatabase implements Database {
 		}
 	}
 
+	@Override
+	public void setRolledBack(long[] ids, boolean rolledBack) throws SQLException {
+		try (PreparedStatement update = connection.prepareStatement("UPDATE actions SET rolled_back = ? WHERE id = ?")) {
+			for (long id : ids) {
+				update.setInt(1, rolledBack ? 1 : 0);
+				update.setLong(2, id);
+				update.addBatch();
+			}
+			update.executeBatch();
+			connection.commit();
+		} catch (SQLException | RuntimeException e) {
+			try {
+				connection.rollback();
+			} catch (SQLException rollbackFailure) {
+				e.addSuppressed(rollbackFailure);
+			}
+			throw e;
+		}
+	}
+
 	private int playerId(ActionRecord record) throws SQLException {
 		Integer id = playerIds.get(record.playerId());
 		if (id == null) {
@@ -252,46 +276,88 @@ public final class SqliteDatabase implements Database {
 				while (result.next()) {
 					actions.add(new LoggedAction(result.getLong(1), result.getLong(2), ActionType.fromId(result.getInt(3)),
 							result.getString(4), result.getString(5), result.getInt(6), result.getInt(7), result.getInt(8),
-							result.getString(9), result.getString(10), result.getString(11), result.getString(12)));
+							result.getString(9), result.getString(10), result.getString(11), result.getString(12),
+							result.getBoolean(13)));
 				}
 			}
 			return actions;
 		}
 	}
 
-	/** A SQL WHERE clause (empty or starting with a space) plus its positional parameters. */
-	record Where(String sql, List<Object> params) {
+	@Override
+	public long[] conflicting(ActionFilter filter) throws SQLException {
+		Where outer = Where.of(filter, "a");
+		Where inner = Where.of(filter, "b");
+		if (outer.condition() == null) {
+			return new long[0]; // every action matches, so no action outside the filter can conflict
+		}
+		String sql = "SELECT a.id FROM actions a WHERE " + outer.condition()
+				+ " AND EXISTS (SELECT 1 FROM actions b"
+				+ " WHERE b.world_id = a.world_id AND b.x = a.x AND b.z = a.z AND b.y = a.y"
+				+ " AND b.id > a.id AND b.rolled_back = 0 AND NOT (" + inner.condition() + "))";
+		try (PreparedStatement statement = readConnection.prepareStatement(sql)) {
+			inner.bind(statement, outer.bind(statement, 1));
+			LongArrayList ids = new LongArrayList();
+			try (ResultSet result = statement.executeQuery()) {
+				while (result.next()) {
+					ids.add(result.getLong(1));
+				}
+			}
+			return ids.toLongArray();
+		}
+	}
+
+	/**
+	 * The SQL condition for a filter plus its positional parameters.
+	 *
+	 * @param condition clauses joined with AND, referring to the actions table by an alias; null if the filter has none
+	 */
+	record Where(String condition, List<Object> params) {
 		static Where of(ActionFilter filter) {
+			return of(filter, "a");
+		}
+
+		static Where of(ActionFilter filter, String alias) {
+			String t = alias + ".";
 			List<String> clauses = new ArrayList<>();
 			List<Object> params = new ArrayList<>();
 			if (filter.world() != null) {
-				clauses.add("a.world_id = (SELECT id FROM worlds WHERE name = ?)");
+				clauses.add(t + "world_id = (SELECT id FROM worlds WHERE name = ?)");
 				params.add(filter.world().identifier().toString());
 			}
 			if (filter.min() != null) {
-				clauses.add("a.x BETWEEN ? AND ? AND a.z BETWEEN ? AND ? AND a.y BETWEEN ? AND ?");
+				clauses.add(t + "x BETWEEN ? AND ? AND " + t + "z BETWEEN ? AND ? AND " + t + "y BETWEEN ? AND ?");
 				params.addAll(List.of(filter.min().getX(), filter.max().getX(), filter.min().getZ(), filter.max().getZ(),
 						filter.min().getY(), filter.max().getY()));
 			}
 			if (!filter.players().isEmpty()) {
-				clauses.add("a.player_id IN (SELECT id FROM players WHERE name COLLATE NOCASE IN (" + placeholders(filter.players().size()) + "))");
+				clauses.add(t + "player_id IN (SELECT id FROM players WHERE name COLLATE NOCASE IN (" + placeholders(filter.players().size()) + "))");
 				params.addAll(filter.players());
 			}
 			if (!filter.types().isEmpty()) {
-				clauses.add("a.type IN (" + placeholders(filter.types().size()) + ")");
+				clauses.add(t + "type IN (" + placeholders(filter.types().size()) + ")");
 				filter.types().forEach(type -> params.add(type.id()));
 			}
 			if (!filter.objects().isEmpty()) {
 				String ids = "(SELECT id FROM objects WHERE name IN (" + placeholders(filter.objects().size()) + "))";
-				clauses.add("(a.old_object_id IN " + ids + " OR a.new_object_id IN " + ids + ")");
+				clauses.add("(" + t + "old_object_id IN " + ids + " OR " + t + "new_object_id IN " + ids + ")");
 				params.addAll(filter.objects());
 				params.addAll(filter.objects());
+			}
+			if (filter.rolledBack() != null) {
+				clauses.add(t + "rolled_back = ?");
+				params.add(filter.rolledBack() ? 1 : 0);
 			}
 			if (filter.sinceMillis() > 0) {
-				clauses.add("a.time >= ?");
+				clauses.add(t + "time >= ?");
 				params.add(filter.sinceMillis());
 			}
-			return new Where(clauses.isEmpty() ? "" : " WHERE " + String.join(" AND ", clauses), params);
+			return new Where(clauses.isEmpty() ? null : String.join(" AND ", clauses), params);
+		}
+
+		/** The condition as a WHERE clause starting with a space, or empty if there is none. */
+		String sql() {
+			return condition == null ? "" : " WHERE " + condition;
 		}
 
 		/** Binds the parameters starting at {@code index} and returns the next free index. */

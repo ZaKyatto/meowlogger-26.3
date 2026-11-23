@@ -1,5 +1,6 @@
 package zakyatto.meowlogger.storage;
 
+import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
@@ -40,7 +41,7 @@ class SqliteDatabaseTest {
 	private static final UUID OTHER = UUID.fromString("00000000-0000-0000-0000-000000000002");
 	private static BlockState AIR;
 	private static final BlockPos ORIGIN = new BlockPos(1, -64, 3);
-	private static final ActionFilter ALL = new ActionFilter(null, null, null, Set.of(), Set.of(), Set.of(), 0);
+	private static final ActionFilter ALL = new ActionFilter(null, null, null, Set.of(), Set.of(), Set.of(), 0, null);
 
 	@TempDir
 	Path dir;
@@ -105,11 +106,11 @@ class SqliteDatabaseTest {
 			assertEquals(List.of(4L, 1L), atOrigin.stream().map(LoggedAction::id).toList(), "newest first, other world excluded");
 			LoggedAction place = atOrigin.getFirst();
 			assertEquals(new LoggedAction(4, 4_000, ActionType.BLOCK_PLACE, "Other", "minecraft:overworld", 1, -64, 3,
-					"minecraft:air", null, "minecraft:dirt", null), place);
+					"minecraft:air", null, "minecraft:dirt", null, false), place);
 
 			assertEquals(4, db.count(ALL));
-			assertEquals(3, db.count(new ActionFilter(Level.OVERWORLD, new BlockPos(0, -70, 0), new BlockPos(12, 80, 12), Set.of(), Set.of(), Set.of(), 0)));
-			assertEquals(2, db.count(new ActionFilter(Level.OVERWORLD, new BlockPos(0, -70, 0), new BlockPos(12, 69, 12), Set.of(), Set.of(), Set.of(), 0)), "y is bounded too");
+			assertEquals(3, db.count(new ActionFilter(Level.OVERWORLD, new BlockPos(0, -70, 0), new BlockPos(12, 80, 12), Set.of(), Set.of(), Set.of(), 0, null)));
+			assertEquals(2, db.count(new ActionFilter(Level.OVERWORLD, new BlockPos(0, -70, 0), new BlockPos(12, 69, 12), Set.of(), Set.of(), Set.of(), 0, null)), "y is bounded too");
 			assertEquals(2, db.count(filter(Set.of("mEoW"), Set.of(), Set.of(), 0)), "player names are case-insensitive");
 			assertEquals(4, db.count(filter(Set.of("meow", "other"), Set.of(), Set.of(), 0)));
 			assertEquals(0, db.count(filter(Set.of("nobody"), Set.of(), Set.of(), 0)));
@@ -128,7 +129,7 @@ class SqliteDatabaseTest {
 	void positionLookupsUseTheIndex() throws SQLException {
 		Path file = dir.resolve("plan.sqlite");
 		new SqliteDatabase(file).close();
-		SqliteDatabase.Where where = SqliteDatabase.Where.of(new ActionFilter(Level.OVERWORLD, ORIGIN, ORIGIN.offset(5, 5, 5), Set.of(), Set.of(), Set.of(), 0));
+		SqliteDatabase.Where where = SqliteDatabase.Where.of(new ActionFilter(Level.OVERWORLD, ORIGIN, ORIGIN.offset(5, 5, 5), Set.of(), Set.of(), Set.of(), 0, null));
 		try (Connection c = open(file); PreparedStatement s = c.prepareStatement("EXPLAIN QUERY PLAN SELECT COUNT(*) FROM actions a" + where.sql())) {
 			where.bind(s, 1);
 			StringBuilder plan = new StringBuilder();
@@ -149,6 +150,7 @@ class SqliteDatabaseTest {
 			s.executeUpdate("DROP INDEX actions_position");
 			s.executeUpdate("DROP INDEX actions_player");
 			s.executeUpdate("DROP INDEX actions_time");
+			s.executeUpdate("ALTER TABLE actions DROP COLUMN rolled_back");
 			s.executeUpdate("PRAGMA user_version = 1");
 		}
 		new SqliteDatabase(file).close();
@@ -159,8 +161,52 @@ class SqliteDatabaseTest {
 			}
 			try (ResultSet r = s.executeQuery("PRAGMA user_version")) {
 				r.next();
-				assertEquals(2, r.getInt(1));
+				assertEquals(3, r.getInt(1));
 			}
+			assertEquals(0, s.executeQuery("SELECT COUNT(*) FROM actions WHERE rolled_back != 0").getInt(1), "rolled_back column exists");
+		}
+	}
+
+	@Test
+	void findsActionsOverriddenByLaterOutsideActions() throws SQLException {
+		BlockPos other = new BlockPos(50, 64, 50);
+		try (SqliteDatabase db = new SqliteDatabase(dir.resolve("conflicts.sqlite"))) {
+			db.write(List.of(
+					record(1, ActionType.BLOCK_BREAK, MEOW, "Meow", Level.OVERWORLD, ORIGIN, Blocks.STONE.defaultBlockState(), AIR),
+					record(2, ActionType.BLOCK_PLACE, OTHER, "Other", Level.OVERWORLD, ORIGIN, AIR, Blocks.DIRT.defaultBlockState()),
+					record(3, ActionType.BLOCK_BREAK, MEOW, "Meow", Level.OVERWORLD, other, Blocks.STONE.defaultBlockState(), AIR),
+					record(4, ActionType.BLOCK_BREAK, MEOW, "Meow", Level.NETHER, ORIGIN, Blocks.NETHERRACK.defaultBlockState(), AIR)));
+			ActionFilter meow = filter(Set.of("Meow"), Set.of(), Set.of(), 0).withRolledBack(false);
+
+			assertArrayEquals(new long[] {1}, db.conflicting(meow), "Other built on the spot Meow cleared");
+			assertArrayEquals(new long[0], db.conflicting(filter(Set.of("Meow", "Other"), Set.of(), Set.of(), 0).withRolledBack(false)),
+					"a later action inside the filter is rolled back along with it");
+
+			db.setRolledBack(new long[] {2}, true);
+			assertArrayEquals(new long[0], db.conflicting(meow), "a rolled-back later action no longer counts");
+
+			// Restore: Meow's break at 'other' was rolled back, then Other placed a block there.
+			db.setRolledBack(new long[] {3}, true);
+			db.write(List.of(record(5, ActionType.BLOCK_PLACE, OTHER, "Other", Level.OVERWORLD, other, AIR, Blocks.OAK_PLANKS.defaultBlockState())));
+			assertArrayEquals(new long[] {3}, db.conflicting(filter(Set.of("Meow"), Set.of(), Set.of(), 0).withRolledBack(true)));
+		}
+	}
+
+	@Test
+	void tracksRolledBackFlag() throws SQLException {
+		try (SqliteDatabase db = new SqliteDatabase(dir.resolve("flags.sqlite"))) {
+			db.write(List.of(
+					record(1, ActionType.BLOCK_BREAK, MEOW, "Meow", Level.OVERWORLD, ORIGIN, Blocks.STONE.defaultBlockState(), AIR),
+					record(2, ActionType.BLOCK_PLACE, MEOW, "Meow", Level.OVERWORLD, ORIGIN, AIR, Blocks.DIRT.defaultBlockState()),
+					record(3, ActionType.BLOCK_BREAK, MEOW, "Meow", Level.OVERWORLD, ORIGIN, Blocks.DIRT.defaultBlockState(), AIR)));
+			db.setRolledBack(new long[] {1, 3}, true);
+
+			assertEquals(List.of(3L, 1L), db.lookup(ALL.withRolledBack(true), 0, 10).stream().map(LoggedAction::id).toList());
+			assertEquals(List.of(2L), db.lookup(ALL.withRolledBack(false), 0, 10).stream().map(LoggedAction::id).toList());
+			assertEquals(List.of(true, false, true), db.lookup(ALL, 0, 10).stream().map(LoggedAction::rolledBack).toList());
+
+			db.setRolledBack(new long[] {3}, false);
+			assertEquals(List.of(1L), db.lookup(ALL.withRolledBack(true), 0, 10).stream().map(LoggedAction::id).toList());
 		}
 	}
 
@@ -174,7 +220,7 @@ class SqliteDatabaseTest {
 	}
 
 	private static ActionFilter filter(Set<String> players, Set<ActionType> types, Set<String> objects, long since) {
-		return new ActionFilter(null, null, null, players, types, objects, since);
+		return new ActionFilter(null, null, null, players, types, objects, since, null);
 	}
 
 	private static ActionRecord record(long time, ActionType type, UUID player, String name, ResourceKey<Level> world,

@@ -19,6 +19,7 @@ import zakyatto.meowlogger.command.Inspector;
 import zakyatto.meowlogger.command.Lookups;
 import zakyatto.meowlogger.command.MeowCommands;
 import zakyatto.meowlogger.query.LookupService;
+import zakyatto.meowlogger.rollback.Rollbacks;
 import zakyatto.meowlogger.storage.ActionWriter;
 import zakyatto.meowlogger.storage.SqliteDatabase;
 
@@ -37,6 +38,7 @@ public class MeowLogger implements ModInitializer {
 		MeowCommands.register();
 		Lookups.register();
 		Inspector.register();
+		Rollbacks.register();
 	}
 
 	/** Identifier in the MeowLogger namespace. */
@@ -48,6 +50,13 @@ public class MeowLogger implements ModInitializer {
 	public static void log(ActionRecord record) {
 		if (writer != null) {
 			writer.submit(record);
+		}
+	}
+
+	/** Queues an asynchronous update of the rolled-back flag of stored actions. Server thread only. */
+	public static void setRolledBack(long[] ids, boolean rolledBack) {
+		if (writer != null) {
+			writer.submitRolledBack(ids, rolledBack);
 		}
 	}
 
@@ -70,7 +79,8 @@ public class MeowLogger implements ModInitializer {
 	}
 
 	private static void stop() {
-		// Lookups first: the writer closes the database they read from.
+		// Rollbacks queue their final flag updates on the writer; lookups read from the database the writer closes.
+		Rollbacks.stop();
 		if (lookups != null) {
 			lookups.close();
 			lookups = null;

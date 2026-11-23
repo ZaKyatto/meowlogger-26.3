@@ -8,7 +8,8 @@ import zakyatto.meowlogger.action.ActionType;
  * @param oldObject block identifier before the action, e.g. {@code minecraft:stone}
  * @param oldState  block state properties before the action, e.g. {@code [axis=y]}, or null if none
  * @param newObject block identifier after the action
- * @param newState  block state properties after the action, or null if none
+ * @param newState   block state properties after the action, or null if none
+ * @param rolledBack whether the action is currently rolled back
  */
 public record LoggedAction(
 		long id,
@@ -22,6 +23,7 @@ public record LoggedAction(
 		String oldObject,
 		String oldState,
 		String newObject,
-		String newState
+		String newState,
+		boolean rolledBack
 ) {
 }

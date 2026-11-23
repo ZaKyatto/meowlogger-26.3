@@ -109,7 +109,7 @@ public final class FilterParser {
 			min = sourcePos.offset(-radius, -radius, -radius);
 			max = sourcePos.offset(radius, radius, radius);
 		}
-		return new ActionFilter(world, min, max, players, types, objects, Math.max(sinceMillis, 0));
+		return new ActionFilter(world, min, max, players, types, objects, Math.max(sinceMillis, 0), null);
 	}
 
 	private static int parseRadius(String value) throws CommandSyntaxException {

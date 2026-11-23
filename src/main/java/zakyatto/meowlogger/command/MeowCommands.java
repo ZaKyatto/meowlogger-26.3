@@ -3,6 +3,7 @@ package zakyatto.meowlogger.command;
 import static net.minecraft.commands.Commands.argument;
 import static net.minecraft.commands.Commands.literal;
 
+import java.util.Set;
 import java.util.function.Predicate;
 
 import com.mojang.brigadier.CommandDispatcher;
@@ -11,30 +12,50 @@ import com.mojang.brigadier.arguments.StringArgumentType;
 import com.mojang.brigadier.builder.LiteralArgumentBuilder;
 import com.mojang.brigadier.context.CommandContext;
 import com.mojang.brigadier.exceptions.CommandSyntaxException;
+import com.mojang.brigadier.exceptions.SimpleCommandExceptionType;
 import com.mojang.brigadier.tree.LiteralCommandNode;
 
 import net.fabricmc.fabric.api.command.v2.CommandRegistrationCallback;
 import net.fabricmc.fabric.api.permission.v1.PermissionPredicates;
 
 import net.minecraft.commands.CommandSourceStack;
+import net.minecraft.commands.arguments.DimensionArgument;
+import net.minecraft.commands.arguments.coordinates.BlockPosArgument;
 import net.minecraft.core.BlockPos;
 import net.minecraft.network.chat.Component;
+import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.server.permissions.PermissionLevel;
 
 import zakyatto.meowlogger.MeowLogger;
 import zakyatto.meowlogger.query.ActionFilter;
+import zakyatto.meowlogger.rollback.Rollbacks;
 
 /**
- * The {@code /meowlogger} command (alias {@code /ml}). Permission nodes {@code meowlogger:lookup} and
- * {@code meowlogger:inspect} default to operator level 2 when no permission mod sets them.
+ * The {@code /meowlogger} command (alias {@code /ml}). Permission nodes {@code meowlogger:lookup},
+ * {@code meowlogger:inspect}, {@code meowlogger:rollback} and {@code meowlogger:teleport} default to
+ * operator level 2 when no permission mod sets them.
  */
 public final class MeowCommands {
-	private static final Predicate<CommandSourceStack> CAN_LOOKUP =
-			PermissionPredicates.require(MeowLogger.id("lookup"), PermissionLevel.GAMEMASTERS);
-	private static final Predicate<CommandSourceStack> CAN_INSPECT =
-			PermissionPredicates.require(MeowLogger.id("inspect"), PermissionLevel.GAMEMASTERS);
+	private static final Predicate<CommandSourceStack> CAN_LOOKUP = permission("lookup");
+	private static final Predicate<CommandSourceStack> CAN_INSPECT = permission("inspect");
+	private static final Predicate<CommandSourceStack> CAN_ROLLBACK = permission("rollback");
+	private static final Predicate<CommandSourceStack> CAN_TELEPORT = permission("teleport");
+	private static final Predicate<CommandSourceStack> CAN_ANY = CAN_LOOKUP.or(CAN_INSPECT).or(CAN_ROLLBACK);
+
+	/**
+	 * The vanilla client asks for confirmation before a chat click runs a command whose path contains a
+	 * node that the server's permission-less, server-less probe source cannot use. Letting that probe
+	 * through keeps the page and teleport links confirmation-free; real sources always have a server,
+	 * so they are still held to the permission check.
+	 */
+	private static final Predicate<CommandSourceStack> CLICK_PROBE = source -> source.getServer() == null;
+
 	private static final Component LOOKUP_TITLE = Component.literal("Lookup");
+	private static final SimpleCommandExceptionType UNSCOPED = new SimpleCommandExceptionType(
+			Component.literal("Rollback and restore need a radius: or player: parameter"));
+	private static final SimpleCommandExceptionType NO_PERMISSION = new SimpleCommandExceptionType(
+			Component.literal("You do not have permission to do that"));
 
 	private MeowCommands() {
 	}
@@ -46,27 +67,42 @@ public final class MeowCommands {
 
 	private static void register(CommandDispatcher<CommandSourceStack> dispatcher) {
 		LiteralCommandNode<CommandSourceStack> root = dispatcher.register(literal("meowlogger")
-				.requires(CAN_LOOKUP.or(CAN_INSPECT))
+				.requires(CLICK_PROBE.or(CAN_ANY))
 				.then(inspect("inspect"))
 				.then(inspect("i"))
-				.then(lookup("lookup"))
-				.then(lookup("l"))
+				.then(withParameters("lookup", CAN_LOOKUP, MeowCommands::lookup))
+				.then(withParameters("l", CAN_LOOKUP, MeowCommands::lookup))
+				.then(withParameters("rollback", CAN_ROLLBACK, (source, parameters) -> rollback(source, parameters, false)))
+				.then(withParameters("restore", CAN_ROLLBACK, (source, parameters) -> rollback(source, parameters, true)))
 				.then(literal("page")
-						.requires(CAN_LOOKUP)
+						.requires(CLICK_PROBE.or(CAN_LOOKUP).or(CAN_INSPECT))
 						.then(argument("page", IntegerArgumentType.integer(1))
-								.executes(context -> page(context.getSource(), IntegerArgumentType.getInteger(context, "page"))))));
+								.executes(context -> page(context.getSource(), IntegerArgumentType.getInteger(context, "page")))))
+				.then(literal("teleport")
+						.requires(CLICK_PROBE.or(CAN_TELEPORT))
+						.then(argument("world", DimensionArgument.dimension())
+								.then(argument("pos", BlockPosArgument.blockPos())
+										.executes(MeowCommands::teleport)))));
 		dispatcher.register(literal("ml").requires(root.getRequirement()).redirect(root));
+	}
+
+	private interface ParameterCommand {
+		void run(CommandSourceStack source, String parameters) throws CommandSyntaxException;
 	}
 
 	private static LiteralArgumentBuilder<CommandSourceStack> inspect(String name) {
 		return literal(name).requires(CAN_INSPECT).executes(MeowCommands::toggleInspector);
 	}
 
-	private static LiteralArgumentBuilder<CommandSourceStack> lookup(String name) {
-		return literal(name).requires(CAN_LOOKUP)
+	private static LiteralArgumentBuilder<CommandSourceStack> withParameters(String name, Predicate<CommandSourceStack> requirement,
+			ParameterCommand command) {
+		return literal(name).requires(requirement)
 				.then(argument("parameters", StringArgumentType.greedyString())
 						.suggests((context, builder) -> FilterParser.suggest(builder, context.getSource()))
-						.executes(context -> lookup(context.getSource(), StringArgumentType.getString(context, "parameters"))));
+						.executes(context -> {
+							command.run(context.getSource(), StringArgumentType.getString(context, "parameters"));
+							return 1;
+						}));
 	}
 
 	private static int toggleInspector(CommandContext<CommandSourceStack> context) throws CommandSyntaxException {
@@ -78,18 +114,50 @@ public final class MeowCommands {
 		return 1;
 	}
 
-	private static int lookup(CommandSourceStack source, String parameters) throws CommandSyntaxException {
-		ActionFilter filter = FilterParser.parse(parameters, source.getLevel().dimension(),
+	private static ActionFilter parse(CommandSourceStack source, String parameters) throws CommandSyntaxException {
+		return FilterParser.parse(parameters, source.getLevel().dimension(),
 				BlockPos.containing(source.getPosition()), System.currentTimeMillis());
-		Lookups.show(source, filter, 1, LOOKUP_TITLE);
-		return 1;
 	}
 
-	private static int page(CommandSourceStack source, int page) {
+	private static void lookup(CommandSourceStack source, String parameters) throws CommandSyntaxException {
+		Lookups.show(source, parse(source, parameters), 1, LOOKUP_TITLE);
+	}
+
+	private static void rollback(CommandSourceStack source, String parameters, boolean restore) throws CommandSyntaxException {
+		ActionFilter filter = parse(source, parameters);
+		if (!filter.isScoped()) {
+			throw UNSCOPED.create();
+		}
+		Rollbacks.start(source, filter, parameters.trim(), restore);
+	}
+
+	private static int page(CommandSourceStack source, int page) throws CommandSyntaxException {
+		requireAtRuntime(source, CAN_LOOKUP.or(CAN_INSPECT));
 		if (!Lookups.page(source, page)) {
 			source.sendFailure(Component.literal("No previous lookup to page through"));
 			return 0;
 		}
 		return 1;
+	}
+
+	private static int teleport(CommandContext<CommandSourceStack> context) throws CommandSyntaxException {
+		CommandSourceStack source = context.getSource();
+		requireAtRuntime(source, CAN_TELEPORT);
+		ServerPlayer player = source.getPlayerOrException();
+		ServerLevel level = DimensionArgument.getDimension(context, "world");
+		BlockPos pos = BlockPosArgument.getBlockPos(context, "pos");
+		player.teleportTo(level, pos.getX() + 0.5, pos.getY() + 1, pos.getZ() + 0.5, Set.of(), player.getYRot(), player.getXRot(), true);
+		return 1;
+	}
+
+	/** Re-checks a permission when the command runs, since {@link #CLICK_PROBE} also lets server-less sources parse it. */
+	private static void requireAtRuntime(CommandSourceStack source, Predicate<CommandSourceStack> permission) throws CommandSyntaxException {
+		if (!permission.test(source)) {
+			throw NO_PERMISSION.create();
+		}
+	}
+
+	private static Predicate<CommandSourceStack> permission(String name) {
+		return PermissionPredicates.require(MeowLogger.id(name), PermissionLevel.GAMEMASTERS);
 	}
 }

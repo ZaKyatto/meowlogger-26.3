@@ -19,11 +19,21 @@ public interface Database extends AutoCloseable {
 	 */
 	void write(List<ActionRecord> records) throws SQLException;
 
+	/** Sets the rolled-back flag of the given actions in a single transaction. Writer thread only. */
+	void setRolledBack(long[] ids, boolean rolledBack) throws SQLException;
+
 	/** Counts the stored actions matching {@code filter}. */
 	int count(ActionFilter filter) throws SQLException;
 
 	/** Returns matching actions, newest first, skipping {@code offset} and returning at most {@code limit}. */
 	List<LoggedAction> lookup(ActionFilter filter, int offset, int limit) throws SQLException;
+
+	/**
+	 * Returns the ids of actions matching {@code filter} that were later overridden at the same block by
+	 * an action that is not rolled back and does not match {@code filter}. Rolling back or restoring
+	 * those would undo someone else's later change.
+	 */
+	long[] conflicting(ActionFilter filter) throws SQLException;
 
 	@Override
 	void close() throws SQLException;

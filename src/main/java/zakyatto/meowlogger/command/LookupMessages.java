@@ -57,21 +57,25 @@ final class LookupMessages {
 						.append(withState(action.oldObject(), action.oldState()))
 						.append(Component.literal("\nAfter: ").withStyle(ChatFormatting.GRAY))
 						.append(withState(action.newObject(), action.newState())))));
-		String teleport = "/execute in " + action.world() + " run tp @s "
-				+ (action.x() + 0.5) + " " + action.y() + " " + (action.z() + 0.5);
+		String teleport = "/ml teleport " + action.world() + " " + action.x() + " " + action.y() + " " + action.z();
 		Component position = Component.literal(action.x() + " " + action.y() + " " + action.z()).withStyle(style -> style
 				.withColor(ChatFormatting.GRAY)
 				.withUnderlined(true)
 				.withClickEvent(new ClickEvent.RunCommand(teleport))
 				.withHoverEvent(new HoverEvent.ShowText(Component.literal("Teleport here (" + shortName(action.world()) + ")"))));
 
-		return Component.empty()
-				.append(when).append(" ")
+		MutableComponent description = Component.empty()
 				.append(Component.literal(action.playerName()).withStyle(ChatFormatting.AQUA)).append(" ")
 				.append(verb).append(" ")
-				.append(block)
-				.append(Component.literal(" at ").withStyle(ChatFormatting.GRAY))
-				.append(position);
+				.append(block);
+		MutableComponent line = Component.empty().append(when).append(" ");
+		if (action.rolledBack()) {
+			line.append(description.withStyle(style -> style.withStrikethrough(true)))
+					.append(Component.literal(" (rolled back)").withStyle(ChatFormatting.DARK_GRAY));
+		} else {
+			line.append(description);
+		}
+		return line.append(Component.literal(" at ").withStyle(ChatFormatting.GRAY)).append(position);
 	}
 
 	static Component footer(int page, int pageCount) {
