@@ -14,7 +14,13 @@ public enum ActionType {
 	/** A player took items out of a container. */
 	ITEM_REMOVE(4, "item-remove", Kind.ITEM),
 	/** A living entity (not a player) died. */
-	ENTITY_KILL(5, "entity-kill", Kind.ENTITY);
+	ENTITY_KILL(5, "entity-kill", Kind.ENTITY),
+	/** An armor stand, item frame, painting, boat or minecart was destroyed. */
+	ENTITY_BREAK(6, "entity-break", Kind.ENTITY),
+	/** A player placed an armor stand, item frame, painting, boat or minecart. */
+	ENTITY_PLACE(7, "entity-place", Kind.ENTITY),
+	/** A player changed an item frame's item or rotation, or an armor stand's equipment. */
+	ENTITY_CHANGE(8, "entity-change", Kind.ENTITY);
 
 	/** What an action changes, which decides how it is stored and rolled back. */
 	public enum Kind {
@@ -22,7 +28,10 @@ public enum ActionType {
 		BLOCK,
 		/** Moves items into or out of a container; the container's block is unchanged. */
 		ITEM,
-		/** Removes an entity from the world. */
+		/**
+		 * Adds, removes or changes an entity. The old data is the entity before (null if it did not
+		 * exist), the new data the entity after (null if it no longer exists).
+		 */
 		ENTITY
 	}
 

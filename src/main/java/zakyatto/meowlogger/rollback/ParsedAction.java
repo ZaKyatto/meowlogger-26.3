@@ -32,7 +32,8 @@ import zakyatto.meowlogger.storage.NbtBlobs;
  * A logged action parsed into game objects, ready to be undone or redone on the server thread.
  *
  * @param oldState for item actions, the container's state; null for entity actions
- * @param oldData  for entity actions, the entity's saved data
+ * @param oldData  for entity actions, the entity's saved data before, or null if it did not exist
+ * @param newData  for entity actions, the entity's saved data after, or null if it no longer exists
  * @param newState for item actions, the container's state; null for entity actions
  * @param items    for item actions, the moved items; otherwise null
  * @param entity   for entity actions, the entity's type; otherwise null
@@ -95,8 +96,9 @@ record ParsedAction(long id, ActionType type, ResourceKey<Level> world, BlockPos
 		if (action.type().kind() == ActionType.Kind.ENTITY) {
 			Identifier typeId = Identifier.tryParse(action.oldObject());
 			Optional<EntityType<?>> type = typeId == null ? Optional.empty() : BuiltInRegistries.ENTITY_TYPE.getOptional(typeId);
-			return type.isEmpty() || oldData == null ? null
-					: new ParsedAction(action.id(), action.type(), world, pos, null, oldData, null, null, null, type.get());
+			boolean complete = action.type() == ActionType.ENTITY_CHANGE ? oldData != null && newData != null : oldData != null || newData != null;
+			return type.isEmpty() || !complete ? null
+					: new ParsedAction(action.id(), action.type(), world, pos, null, oldData, null, newData, null, type.get());
 		}
 		BlockState oldState = parseState(action.oldObject(), action.oldState(), states);
 		if (oldState == null) {

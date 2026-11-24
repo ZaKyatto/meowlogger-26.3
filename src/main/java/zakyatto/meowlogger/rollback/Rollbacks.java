@@ -151,9 +151,7 @@ public final class Rollbacks {
 				lines.add(task.unappliedItems() + " item moves because the container is gone, full, or no longer has the items");
 			}
 			if (task.unappliedEntities() > 0) {
-				lines.add(task.unappliedEntities() + (task.restore()
-						? " entity kills because the entity is gone or not loaded"
-						: " entity kills because the entity is alive already"));
+				lines.add(task.unappliedEntities() + " entity actions because the entity exists already, or is gone or not loaded");
 			}
 			Component reasons = Component.literal(String.join("\n", lines));
 			message = Component.empty().append(message).append(Component.literal(", skipped " + skipped).withStyle(style -> style

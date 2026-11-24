@@ -14,6 +14,8 @@ client mod is needed.
 | Blocks burnt by fire | `fire` | none |
 | Items put into or taken out of chests, barrels, shulker boxes, furnaces and other block containers | `player` | the player |
 | Animals, villagers, pets and other non-hostile mobs dying, plus name-tagged hostile mobs | `player`, the weapon (e.g. `arrow`), the attacking mob, or the cause (e.g. `lava`, `fall`) | the killer, if a player |
+| Armor stands, item frames, paintings, boats and minecarts placed or broken | `player`, the weapon or explosion, or `meowlogger:support_broken` when the block a frame or painting hung on is gone | the player, if any |
+| Items put into, taken out of or rotated in item frames, and armor stand equipment swapped | `player` | the player |
 
 Block entity data (chest contents, sign text, banner patterns) is saved with each change, so a
 rolled-back chest comes back with its items. Items that dropped when it broke are not removed.
@@ -25,8 +27,12 @@ Rolling back a kill brings the mob back where it died, with full health, its nam
 owner and inventory (what it dropped when it died is not removed). Restoring a kill removes it again (without drops), as long as it is still
 loaded. Players and ordinary hostile mobs are not logged.
 
-Not logged yet: water and lava flow (including cobblestone and obsidian it creates), armor stands,
-item frames, paintings and vehicles, and books put into lecterns or chiseled bookshelves.
+Decorations work the same way: rolling back a break brings the armor stand, frame, painting or
+vehicle back with its contents, rolling back a placement removes it, and rolling back a change puts
+the old item or equipment back.
+
+Not logged yet: water and lava flow (including cobblestone and obsidian it creates), and books put
+into lecterns or chiseled bookshelves.
 
 ## Usage
 
@@ -56,10 +62,10 @@ Lookup parameters can be combined; lists are comma-separated:
 | `radius:` / `r:` | `r:10` | Within 10 blocks of you (up to `maxRadius`, 1000 by default), in your current world |
 | `player:` / `p:` | `p:Steve,Alex` | Actions these players did or caused (e.g. TNT they lit) |
 | `source:` / `s:` | `s:creeper,tnt` | Actions with this cause (`player`, `fire`, an entity such as `creeper`) |
-| `action:` / `a:` | `a:item-remove` | `block-break`, `block-place`, `item-insert`, `item-remove`, `entity-kill` |
+| `action:` / `a:` | `a:item-remove` | `block-break`, `block-place`, `item-insert`, `item-remove`, `entity-kill`, `entity-break`, `entity-place`, `entity-change` |
 | `block:` / `b:` | `b:diamond_ore` | Actions involving this block (before or after), or this container |
 | `item:` / `i:` | `i:diamond` | Item actions moving this item |
-| `entity:` / `e:` | `e:cow,horse` | Kills of this kind of mob |
+| `entity:` / `e:` | `e:cow,armor_stand` | Actions on this kind of mob, decoration or vehicle |
 | `time:` / `t:` | `t:1d12h` | Within this time (`s`, `m`, `h`, `d`, `w`) |
 | `before:` | `before:30d` | Longer ago than this |
 | `world:` / `w:` | `w:the_nether` | Only this dimension |

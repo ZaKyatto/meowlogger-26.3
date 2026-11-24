@@ -22,10 +22,11 @@ import net.minecraft.world.level.block.state.BlockState;
  * @param pos        affected block position; for entity actions, the block the entity was in
  * @param oldState   block state before the action; for item actions, the container's state; null for entity actions
  * @param oldData    block entity data before the action (e.g. chest contents), or null if none; for
- *                   entity actions, the entity's saved data
+ *                   entity actions, the entity's saved data before, or null if it did not exist
  * @param newState   block state after the action; for item actions, the container's state; null for entity actions
  * @param newData    block entity data after the action, or null if none; for item actions, the
- *                   moved items as written by {@link ItemData#encode}
+ *                   moved items as written by {@link ItemData#encode}; for entity actions, the
+ *                   entity's saved data after, or null if it no longer exists
  * @param object     for item actions, the moved item's identifier, e.g. {@code minecraft:diamond}; for
  *                   entity actions, the entity type, e.g. {@code minecraft:cow}; null for block changes
  */

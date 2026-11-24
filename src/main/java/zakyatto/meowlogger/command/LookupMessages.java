@@ -4,7 +4,11 @@ import java.io.IOException;
 import java.time.Instant;
 import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Optional;
+import java.util.Set;
+import java.util.TreeSet;
 import java.util.UUID;
 
 import net.minecraft.ChatFormatting;
@@ -60,6 +64,9 @@ final class LookupMessages {
 			case ITEM_INSERT -> Component.literal("added").withStyle(ChatFormatting.GREEN);
 			case ITEM_REMOVE -> Component.literal("took").withStyle(ChatFormatting.RED);
 			case ENTITY_KILL -> Component.literal("killed").withStyle(ChatFormatting.RED);
+			case ENTITY_BREAK -> Component.literal("broke").withStyle(ChatFormatting.RED);
+			case ENTITY_PLACE -> Component.literal("placed").withStyle(ChatFormatting.GREEN);
+			case ENTITY_CHANGE -> Component.literal("changed").withStyle(ChatFormatting.GOLD);
 		};
 		Component what = switch (action.type()) {
 			case BLOCK_BREAK -> block(action.oldObject(), action);
@@ -68,7 +75,14 @@ final class LookupMessages {
 					.append(items(action, registries))
 					.append(Component.literal(action.type() == ActionType.ITEM_INSERT ? " to " : " from ").withStyle(ChatFormatting.GRAY))
 					.append(Component.literal(shortName(action.oldObject())).withStyle(ChatFormatting.YELLOW));
-			case ENTITY_KILL -> entity(action, registries);
+			case ENTITY_KILL, ENTITY_BREAK, ENTITY_PLACE -> entity(action, decompress(action.oldData(), action.newData()), registries);
+			case ENTITY_CHANGE -> {
+				CompoundTag before = decompress(action.oldData(), null);
+				CompoundTag after = decompress(action.newData(), null);
+				String detail = before == null || after == null ? "" : changeDetail(before, after);
+				yield Component.empty().append(entity(action, after != null ? after : before, registries))
+						.append(Component.literal(detail.isEmpty() ? "" : " (" + detail + ")").withStyle(ChatFormatting.GRAY));
+			}
 		};
 
 		Component when = Component.literal(ago(nowMillis - action.timeMillis())).withStyle(style -> style
@@ -126,13 +140,7 @@ final class LookupMessages {
 	 * "cow", or {@code cow "Bessie"} if it was named, hovering to show the entity's tooltip when its
 	 * data still decodes.
 	 */
-	private static Component entity(LoggedAction action, HolderLookup.Provider registries) {
-		CompoundTag data;
-		try {
-			data = NbtBlobs.decompress(action.oldData());
-		} catch (IOException e) {
-			data = null;
-		}
+	private static Component entity(LoggedAction action, CompoundTag data, HolderLookup.Provider registries) {
 		Optional<EntityType<?>> type = Optional.ofNullable(Identifier.tryParse(action.oldObject()))
 				.flatMap(BuiltInRegistries.ENTITY_TYPE::getOptional);
 		Optional<UUID> uuid = data == null ? Optional.empty() : data.read(Entity.TAG_UUID, UUIDUtil.CODEC);
@@ -144,6 +152,48 @@ final class LookupMessages {
 		MutableComponent text = Component.literal(shortName(action.oldObject()));
 		name.ifPresent(custom -> text.append(" \"").append(custom).append("\""));
 		return text.withStyle(style -> style.withColor(ChatFormatting.YELLOW).withHoverEvent(hover));
+	}
+
+	/** Decompresses {@code data}, or {@code fallback} if it is null; returns null if neither decodes. */
+	private static CompoundTag decompress(byte[] data, byte[] fallback) {
+		try {
+			CompoundTag tag = NbtBlobs.decompress(data);
+			return tag != null ? tag : NbtBlobs.decompress(fallback);
+		} catch (IOException e) {
+			return null;
+		}
+	}
+
+	/**
+	 * Describes what changed between two saves of an item frame or armor stand: {@code diamond → nothing},
+	 * {@code head: nothing → iron_helmet}, or {@code rotated}. Empty if none of those changed.
+	 */
+	static String changeDetail(CompoundTag before, CompoundTag after) {
+		List<String> parts = new ArrayList<>();
+		String oldItem = itemName(before.getCompoundOrEmpty("Item"));
+		String newItem = itemName(after.getCompoundOrEmpty("Item"));
+		if (!oldItem.equals(newItem)) {
+			parts.add(oldItem + " → " + newItem);
+		}
+		CompoundTag oldEquipment = before.getCompoundOrEmpty("equipment");
+		CompoundTag newEquipment = after.getCompoundOrEmpty("equipment");
+		Set<String> slots = new TreeSet<>(oldEquipment.keySet());
+		slots.addAll(newEquipment.keySet());
+		for (String slot : slots) {
+			String oldSlot = itemName(oldEquipment.getCompoundOrEmpty(slot));
+			String newSlot = itemName(newEquipment.getCompoundOrEmpty(slot));
+			if (!oldSlot.equals(newSlot)) {
+				parts.add(slot + ": " + oldSlot + " → " + newSlot);
+			}
+		}
+		if (parts.isEmpty() && before.getByteOr("ItemRotation", (byte) 0) != after.getByteOr("ItemRotation", (byte) 0)) {
+			parts.add("rotated");
+		}
+		return String.join(", ", parts);
+	}
+
+	private static String itemName(CompoundTag item) {
+		return item.getString("id").map(LookupMessages::shortName).orElse("nothing");
 	}
 
 	/** "Steve" for a direct player action, "Steve (tnt)" for one a player caused indirectly, "creeper" for no player. */

@@ -14,6 +14,9 @@
   //   "item-insert"  items put into a container
   //   "item-remove"  items taken out of a container
   //   "entity-kill"  mobs killed
+  //   "entity-break"   armor stands, item frames, paintings, boats and minecarts destroyed
+  //   "entity-place"   the same placed by a player
+  //   "entity-change"  item frame items and rotation, armor stand equipment changed by a player
   // Example: ["item-insert", "item-remove"]
   "ignoredActions": [],
 
@@ -25,14 +28,15 @@
   //   "player"                                  anything a player did directly
   //   "fire"                                    blocks burning away
   //   "tnt", "creeper", "end_crystal", "wither" explosions
-  //   "arrow", "zombie", "lava", "fall"         what killed a mob
+  //   "arrow", "zombie", "lava", "fall"         what killed a mob or broke a decoration
+  //   "meowlogger:support_broken"               item frames and paintings dropping because their wall is gone
   "ignoredSources": [],
 
   // Blocks, items and mobs not to log, e.g. ["short_grass", "furnace", "chicken"].
   //   Block breaks match the broken block, placements the placed block
   //   (ignoring "short_grass" still logs stone placed where grass was).
   //   Item actions match the item OR the container ("furnace" skips all furnace use).
-  //   Kills match the mob.
+  //   Entity actions match the entity, e.g. "cow", "painting", "armor_stand", "oak_boat".
   "ignoredObjects": [],
 
   // Also log kills of ordinary hostile mobs (zombies, skeletons, ...).

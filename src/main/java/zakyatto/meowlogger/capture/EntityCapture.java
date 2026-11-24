@@ -52,22 +52,39 @@ public final class EntityCapture {
 		}
 		// Deaths that skip the damage path (no lethal hit) have no pending data; their loot has dropped by now.
 		CompoundTag data = saved != null && saved.entity() == entity ? saved.data() : save(entity);
+		log(ActionType.ENTITY_KILL, cause(source), entity, data, null);
+	}
+
+	/**
+	 * What caused damage, as a logged source plus the responsible player if any. A player hitting
+	 * directly is {@code minecraft:player}; otherwise the source is the projectile or other direct
+	 * entity (e.g. {@code arrow}, {@code tnt}), the attacker, or the damage type (e.g. {@code lava}).
+	 */
+	record Cause(String source, Player player) {
+	}
+
+	static Cause cause(DamageSource source) {
 		Entity attacker = source.getEntity();
 		Entity direct = source.getDirectEntity();
 		Player player = attacker instanceof ServerPlayer serverPlayer ? serverPlayer : null;
-		String cause;
 		if (player != null && direct == player) {
-			cause = ActionRecord.PLAYER_SOURCE;
-		} else if (direct != null) {
-			cause = EntityType.getKey(direct.getType()).toString();
-		} else if (attacker != null) {
-			cause = EntityType.getKey(attacker.getType()).toString();
-		} else {
-			cause = source.typeHolder().getRegisteredName();
+			return new Cause(ActionRecord.PLAYER_SOURCE, player);
 		}
-		MeowLogger.log(new ActionRecord(System.currentTimeMillis(), ActionType.ENTITY_KILL, cause,
+		if (direct != null) {
+			return new Cause(EntityType.getKey(direct.getType()).toString(), player);
+		}
+		if (attacker != null) {
+			return new Cause(EntityType.getKey(attacker.getType()).toString(), player);
+		}
+		return new Cause(source.typeHolder().getRegisteredName(), null);
+	}
+
+	/** Logs an entity action; {@code oldData} or {@code newData} is null when the entity did not exist before or after. */
+	static void log(ActionType type, Cause cause, Entity entity, CompoundTag oldData, CompoundTag newData) {
+		Player player = cause.player();
+		MeowLogger.log(new ActionRecord(System.currentTimeMillis(), type, cause.source(),
 				player == null ? null : player.getUUID(), player == null ? null : player.getGameProfile().name(),
-				entity.level().dimension(), entity.blockPosition(), null, data, null, null,
+				entity.level().dimension(), entity.blockPosition(), null, oldData, null, newData,
 				EntityType.getKey(entity.getType()).toString()));
 	}
 

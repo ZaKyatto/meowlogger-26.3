@@ -1,7 +1,9 @@
 package zakyatto.meowlogger.rollback;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.util.HashMap;
 import java.util.List;
@@ -99,6 +101,60 @@ class RollbackTest {
 		assertEquals(2, parsed.invalid());
 		assertEquals(List.of(new ParsedAction(20, ActionType.ENTITY_KILL, Level.OVERWORLD, new BlockPos(1, 2, 3), null, cow, null, null, null,
 				EntityTypes.COW)), parsed.changes());
+	}
+
+	@Test
+	void parsesEntityPlacementsAndChanges() {
+		CompoundTag frame = new CompoundTag();
+		frame.putString("id", "minecraft:item_frame");
+		byte[] data = SqliteDatabaseAccess.compress(frame);
+		LoggedAction place = entityAction(30, ActionType.ENTITY_PLACE, null, data);
+		LoggedAction change = entityAction(31, ActionType.ENTITY_CHANGE, data, data);
+		LoggedAction halfChange = entityAction(32, ActionType.ENTITY_CHANGE, data, null);
+
+		ParsedAction.Parsed parsed = ParsedAction.parseAll(List.of(place, change, halfChange), LongSet.of(), REGISTRIES);
+
+		assertEquals(1, parsed.invalid(), "a change needs the entity before and after");
+		BlockPos pos = new BlockPos(1, 2, 3);
+		assertEquals(List.of(
+				new ParsedAction(30, ActionType.ENTITY_PLACE, Level.OVERWORLD, pos, null, null, null, frame, null, EntityTypes.ITEM_FRAME),
+				new ParsedAction(31, ActionType.ENTITY_CHANGE, Level.OVERWORLD, pos, null, frame, null, frame, null, EntityTypes.ITEM_FRAME)),
+				parsed.changes());
+	}
+
+	@Test
+	void putsSupportsBackBeforeWhatRestsOnThem() {
+		BlockState air = Blocks.AIR.defaultBlockState();
+		BlockState stone = Blocks.STONE.defaultBlockState();
+		BlockState rail = Blocks.RAIL.defaultBlockState();
+		BlockState sand = Blocks.SAND.defaultBlockState();
+		BlockPos ground = new BlockPos(0, 64, 0);
+		// An explosion's breaks in the order a rollback would apply them: newest first, in no useful order.
+		ParsedAction railBreak = blockChange(1, ground.above(), rail, air);
+		ParsedAction upperSand = blockChange(2, ground.above(3), sand, air);
+		ParsedAction cartBreak = new ParsedAction(3, ActionType.ENTITY_BREAK, Level.OVERWORLD, ground.above(), null, new CompoundTag(),
+				null, null, null, EntityTypes.MINECART);
+		ParsedAction lowerSand = blockChange(4, ground.above(2), sand, air);
+		ParsedAction groundBreak = blockChange(5, ground, stone, air);
+		ParsedAction railPlacedEarlier = blockChange(6, ground.above(), air, rail);
+
+		List<ParsedAction> order = RollbackTask.applyOrder(List.of(railBreak, upperSand, cartBreak, lowerSand, groundBreak, railPlacedEarlier), false);
+
+		assertEquals(List.of(groundBreak, railBreak, railPlacedEarlier, lowerSand, upperSand, cartBreak), order,
+				"ground first, then dependent blocks bottom up keeping each position's order, then entities");
+		assertFalse(RollbackTask.needsSupport(stone));
+		assertFalse(RollbackTask.needsSupport(air));
+		assertTrue(RollbackTask.needsSupport(Blocks.TORCH.defaultBlockState()));
+		assertTrue(RollbackTask.needsSupport(Blocks.GRAVEL.defaultBlockState()));
+	}
+
+	private static ParsedAction blockChange(long id, BlockPos pos, BlockState oldState, BlockState newState) {
+		return new ParsedAction(id, ActionType.BLOCK_BREAK, Level.OVERWORLD, pos, oldState, null, newState, null, null, null);
+	}
+
+	private static LoggedAction entityAction(long id, ActionType type, byte[] oldData, byte[] newData) {
+		return new LoggedAction(id, 0, type, ActionRecord.PLAYER_SOURCE, "Meow", "minecraft:overworld", 1, 2, 3,
+				"minecraft:item_frame", null, oldData, "minecraft:item_frame", null, newData, false);
 	}
 
 	private static LoggedAction entityKill(long id, String type, byte[] data) {

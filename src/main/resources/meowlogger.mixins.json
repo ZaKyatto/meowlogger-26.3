@@ -4,11 +4,15 @@
 	"compatibilityLevel": "JAVA_25",
 	"mixins": [
 		"AbstractContainerMenuMixin",
+		"BlockAttachedEntityMixin",
 		"BlockItemMixin",
 		"BucketItemMixin",
 		"CompoundContainerAccessor",
+		"DecorationHurtMixin",
+		"DecorationInteractMixin",
 		"FireBlockMixin",
 		"ServerExplosionMixin",
+		"ServerLevelMixin",
 		"ServerPlayerGameModeMixin"
 	],
 	"injectors": {
