@@ -1,5 +1,7 @@
 package zakyatto.meowlogger.capture;
 
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.WeakHashMap;
@@ -35,6 +37,7 @@ public final class InteractionCapture {
 		private final AbstractContainerMenu menu;
 		private final Use outer;
 		private boolean logged;
+		private List<Runnable> afterwards;
 
 		private Use(ServerPlayer player, Level level, BlockPos pos, Use outer) {
 			this.player = player;
@@ -76,6 +79,9 @@ public final class InteractionCapture {
 	/** Called after the right-click, with what {@link #beforeUse} returned. */
 	public static void afterUse(Use use) {
 		current = use.outer;
+		if (use.afterwards != null) {
+			use.afterwards.forEach(Runnable::run);
+		}
 		if (use.pos == null) {
 			return;
 		}
@@ -85,6 +91,22 @@ public final class InteractionCapture {
 		if (use.player.containerMenu != use.menu && use.player.containerMenu instanceof LecternMenu menu) {
 			lecternMenus.put(menu, new MenuBlock(use.level, use.pos));
 		}
+	}
+
+	/**
+	 * Runs {@code log} once the current right-click is done, or now if there is none. For changes the
+	 * click causes as a side effect, which must be logged after the click's own action so a rollback
+	 * undoes them first (lava from a bucket turning into obsidian at once).
+	 */
+	static void logAfterUse(Runnable log) {
+		if (current == null) {
+			log.run();
+			return;
+		}
+		if (current.afterwards == null) {
+			current.afterwards = new ArrayList<>(1);
+		}
+		current.afterwards.add(log);
 	}
 
 	/** Called when a block change at {@code pos} was logged elsewhere (a placement or bucket), so the click isn't logged twice. */

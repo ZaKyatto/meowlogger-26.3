@@ -20,6 +20,7 @@ import net.minecraft.nbt.CompoundTag;
 import net.minecraft.resources.Identifier;
 import net.minecraft.resources.ResourceKey;
 import net.minecraft.world.entity.EntityType;
+import net.minecraft.world.entity.EntityTypes;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.level.block.state.BlockState;
 
@@ -96,7 +97,7 @@ record ParsedAction(long id, ActionType type, ResourceKey<Level> world, BlockPos
 		}
 		BlockPos pos = new BlockPos(action.x(), action.y(), action.z());
 		if (action.type().kind() == ActionType.Kind.ENTITY) {
-			Optional<EntityType<?>> type = entityType(action.oldObject());
+			Optional<EntityType<?>> type = action.type().isItemEntity() ? Optional.of(EntityTypes.ITEM) : entityType(action.oldObject());
 			boolean complete = action.type() == ActionType.ENTITY_CHANGE ? oldData != null && newData != null : oldData != null || newData != null;
 			return type.isEmpty() || !complete ? null
 					: new ParsedAction(action.id(), action.type(), world, pos, null, oldData, null, newData, null, type.get());

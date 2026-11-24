@@ -81,11 +81,15 @@ public final class EntityCapture {
 
 	/** Logs an entity action; {@code oldData} or {@code newData} is null when the entity did not exist before or after. */
 	static void log(ActionType type, Cause cause, Entity entity, CompoundTag oldData, CompoundTag newData) {
+		log(type, cause, entity, oldData, newData, EntityType.getKey(entity.getType()).toString());
+	}
+
+	/** Like {@link #log(ActionType, Cause, Entity, CompoundTag, CompoundTag)}, stored under {@code object} (e.g. an item id). */
+	static void log(ActionType type, Cause cause, Entity entity, CompoundTag oldData, CompoundTag newData, String object) {
 		Player player = cause.player();
 		MeowLogger.log(new ActionRecord(System.currentTimeMillis(), type, cause.source(),
 				player == null ? null : player.getUUID(), player == null ? null : player.getGameProfile().name(),
-				entity.level().dimension(), entity.blockPosition(), null, oldData, null, newData,
-				EntityType.getKey(entity.getType()).toString()));
+				entity.level().dimension(), entity.blockPosition(), null, oldData, null, newData, object));
 	}
 
 	private static boolean isLogged(LivingEntity entity) {

@@ -21,7 +21,9 @@ import org.slf4j.LoggerFactory;
 
 import zakyatto.meowlogger.action.ActionRecord;
 import zakyatto.meowlogger.capture.EntityCapture;
+import zakyatto.meowlogger.capture.FallingCapture;
 import zakyatto.meowlogger.capture.FireCapture;
+import zakyatto.meowlogger.capture.FluidCapture;
 import zakyatto.meowlogger.command.Inspector;
 import zakyatto.meowlogger.command.Lookups;
 import zakyatto.meowlogger.command.MeowCommands;
@@ -44,6 +46,7 @@ public class MeowLogger implements ModInitializer {
 	private static ActionWriter writer;
 	private static LookupService lookups;
 	private static long nextRetentionRun;
+	private static boolean paused;
 	private static volatile boolean retentionRunning; // cleared on the writer thread
 
 	@Override
@@ -58,6 +61,8 @@ public class MeowLogger implements ModInitializer {
 		ServerTickEvents.END_SERVER_TICK.register(server -> applyRetention());
 		EntityCapture.register();
 		FireCapture.register();
+		FluidCapture.register();
+		FallingCapture.register();
 		MeowCommands.register();
 		Purges.register();
 		Lookups.register();
@@ -68,6 +73,15 @@ public class MeowLogger implements ModInitializer {
 	/** Identifier in the MeowLogger namespace. */
 	public static Identifier id(String path) {
 		return Identifier.fromNamespaceAndPath(MOD_ID, path);
+	}
+
+	/**
+	 * Stops or resumes logging. Rollbacks pause it while they change the world, so side effects of
+	 * putting blocks back (lava turning into obsidian next to water that is about to be removed,
+	 * blocks popping off for a moment) don't become new actions. Server thread only.
+	 */
+	public static void setPaused(boolean value) {
+		paused = value;
 	}
 
 	/** The current config. Safe to call from any thread. */
@@ -91,7 +105,7 @@ public class MeowLogger implements ModInitializer {
 
 	/** Queues an action for asynchronous storage, unless the config ignores it. Must be called on the server thread. */
 	public static void log(ActionRecord record) {
-		if (writer != null && config.shouldLog(record)) {
+		if (writer != null && !paused && config.shouldLog(record)) {
 			writer.submit(record);
 		}
 	}

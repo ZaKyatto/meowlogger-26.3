@@ -25,6 +25,8 @@ import net.minecraft.network.chat.MutableComponent;
 import net.minecraft.resources.Identifier;
 import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.EntityType;
+import net.minecraft.world.item.ItemStack;
+import net.minecraft.world.item.ItemStackTemplate;
 
 import zakyatto.meowlogger.action.ActionRecord;
 import zakyatto.meowlogger.action.ActionType;
@@ -69,6 +71,8 @@ final class LookupMessages {
 			case ENTITY_BREAK -> Component.literal("broke").withStyle(ChatFormatting.RED);
 			case ENTITY_PLACE -> Component.literal("placed").withStyle(ChatFormatting.GREEN);
 			case ENTITY_CHANGE, BLOCK_CHANGE -> Component.literal("changed").withStyle(ChatFormatting.GOLD);
+			case ITEM_DROP -> Component.literal("dropped").withStyle(ChatFormatting.GOLD);
+			case ITEM_PICKUP -> Component.literal("picked up").withStyle(ChatFormatting.GOLD);
 		};
 		Component what = switch (action.type()) {
 			case BLOCK_BREAK -> block(action.oldObject(), action);
@@ -88,6 +92,7 @@ final class LookupMessages {
 				String detail = before == null || after == null ? "" : blockChangeDetail(before, after);
 				yield text.append(Component.literal(detail.isEmpty() ? "" : " (" + detail + ")").withStyle(ChatFormatting.GRAY));
 			}
+			case ITEM_DROP, ITEM_PICKUP -> itemEntity(action, decompress(action.oldData(), action.newData()), registries);
 			case ENTITY_KILL, ENTITY_BREAK, ENTITY_PLACE -> entity(action, decompress(action.oldData(), action.newData()), registries);
 			case ENTITY_CHANGE -> {
 				CompoundTag before = decompress(action.oldData(), null);
@@ -165,6 +170,19 @@ final class LookupMessages {
 		MutableComponent text = Component.literal(shortName(action.oldObject()));
 		name.ifPresent(custom -> text.append(" \"").append(custom).append("\""));
 		return text.withStyle(style -> style.withColor(ChatFormatting.YELLOW).withHoverEvent(hover));
+	}
+
+	/** "5 × diamond" for a dropped or picked-up item entity, hovering to show the item's tooltip. */
+	private static Component itemEntity(LoggedAction action, CompoundTag data, HolderLookup.Provider registries) {
+		ItemStack stack = data == null ? ItemStack.EMPTY : data.read("Item", ItemStack.CODEC,
+				registries.createSerializationContext(NbtOps.INSTANCE)).orElse(ItemStack.EMPTY);
+		if (stack.isEmpty()) {
+			return Component.literal("? × " + shortName(action.oldObject())).withStyle(ChatFormatting.YELLOW);
+		}
+		ItemStackTemplate item = ItemStackTemplate.fromNonEmptyStack(stack, 1);
+		return Component.literal(stack.getCount() + " × " + shortName(action.oldObject())).withStyle(style -> style
+				.withColor(ChatFormatting.YELLOW)
+				.withHoverEvent(new HoverEvent.ShowItem(item)));
 	}
 
 	/** Decompresses {@code data}, or {@code fallback} if it is null; returns null if neither decodes. */

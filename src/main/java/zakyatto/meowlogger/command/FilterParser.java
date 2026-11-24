@@ -48,7 +48,7 @@ public final class FilterParser {
 	private static final DynamicCommandExceptionType UNKNOWN_ENTITY = error(value -> "Unknown entity '" + value + "'");
 	private static final DynamicCommandExceptionType BAD_SOURCE = error(value -> "Invalid source '" + value + "'");
 	private static final List<String> COMMON_SOURCES = List.of("player", "tnt", "creeper", "fire", "end_crystal", "tnt_minecart", "fireball", "wither", "bad_respawn_point",
-			"arrow", "lava", "fall", "drown", "zombie", "skeleton", "wolf");
+			"arrow", "lava", "fall", "drown", "zombie", "skeleton", "wolf", "water", "falling_block");
 	private static final DynamicCommandExceptionType BAD_WORLD = error(value -> "Invalid world '" + value + "'");
 
 	private FilterParser() {

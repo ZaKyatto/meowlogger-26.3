@@ -120,6 +120,19 @@ class RollbackTest {
 	}
 
 	@Test
+	void parsesItemPickupsAsItemEntitiesStoredUnderTheirItem() {
+		CompoundTag item = new CompoundTag();
+		item.putString("id", "minecraft:item");
+		LoggedAction pickup = new LoggedAction(50, 0, ActionType.ITEM_PICKUP, ActionRecord.PLAYER_SOURCE, "Meow", "minecraft:overworld", 1, 2, 3,
+				"minecraft:diamond", null, SqliteDatabaseAccess.compress(item), "minecraft:diamond", null, null, false);
+
+		ParsedAction change = ParsedAction.parseAll(List.of(pickup), LongSet.of(), REGISTRIES).changes().getFirst();
+
+		assertEquals(EntityTypes.ITEM, change.entity());
+		assertEquals(item, change.oldData());
+	}
+
+	@Test
 	void parsesEntityPlacementsAndChanges() {
 		CompoundTag frame = new CompoundTag();
 		frame.putString("id", "minecraft:item_frame");

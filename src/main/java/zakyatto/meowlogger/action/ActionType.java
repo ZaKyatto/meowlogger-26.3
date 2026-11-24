@@ -25,7 +25,16 @@ public enum ActionType {
 	 * A player changed a block by using it, without placing or breaking it: a book put on a lectern,
 	 * a disc into a jukebox, a plant into a flower pot, a log stripped, dirt tilled.
 	 */
-	BLOCK_CHANGE(9, "block-change", Kind.BLOCK);
+	BLOCK_CHANGE(9, "block-change", Kind.BLOCK),
+	/** A player dropped items (also when dying). The entity is the dropped item entity. */
+	ITEM_DROP(10, "item-drop", Kind.ENTITY),
+	/** A player picked items up. The entity is the picked-up part of the item entity. */
+	ITEM_PICKUP(11, "item-pickup", Kind.ENTITY);
+
+	/** Whether this action's entity is an item entity, stored under its item's identifier instead of {@code minecraft:item}. */
+	public boolean isItemEntity() {
+		return this == ITEM_DROP || this == ITEM_PICKUP;
+	}
 
 	/** What an action changes, which decides how it is stored and rolled back. */
 	public enum Kind {

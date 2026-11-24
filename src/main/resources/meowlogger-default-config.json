@@ -15,6 +15,8 @@
   //                    decorated pots, chiseled bookshelves, stripped logs, tilled dirt
   //   "item-insert"    items put into a container (block, or chest minecart / chest boat)
   //   "item-remove"    items taken out of a container
+  //   "item-drop"      items a player dropped (also on death)
+  //   "item-pickup"    items a player picked up
   //   "entity-kill"    mobs killed
   //   "entity-break"   armor stands, item frames, paintings, boats and minecarts destroyed
   //   "entity-place"   the same placed by a player
@@ -32,6 +34,9 @@
   //   "tnt", "creeper", "end_crystal", "wither" explosions
   //   "arrow", "zombie", "lava", "fall"         what killed a mob or broke a decoration
   //   "meowlogger:support_broken"               item frames and paintings dropping because their wall is gone
+  //   "water", "lava"                           fluid flowing and washing blocks away (credited to whoever
+  //                                             placed it); "lava" is also lava turning into stone or obsidian
+  //   "falling_block"                           sand, gravel, anvils falling and landing
   "ignoredSources": [],
 
   // Blocks, items and mobs not to log, e.g. ["short_grass", "furnace", "chicken"].
@@ -39,6 +44,7 @@
   //   (ignoring "short_grass" still logs stone placed where grass was).
   //   Item actions match the item OR the container ("furnace" skips all furnace use).
   //   Entity actions match the entity, e.g. "cow", "painting", "armor_stand", "oak_boat".
+  //   Dropped and picked-up items match the item ("cobblestone" skips mining pickups).
   "ignoredObjects": [],
 
   // Also log kills of ordinary hostile mobs (zombies, skeletons, ...).

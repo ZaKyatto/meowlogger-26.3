@@ -33,6 +33,7 @@ import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.storage.TagValueInput;
 import net.minecraft.world.phys.Vec3;
 
+import zakyatto.meowlogger.MeowLogger;
 import zakyatto.meowlogger.action.ActionType;
 
 /**
@@ -121,6 +122,15 @@ final class RollbackTask {
 
 	/** Applies changes until all are done or {@code deadlineNanos} passes. Returns true when finished. */
 	boolean run(MinecraftServer server, long deadlineNanos) {
+		MeowLogger.setPaused(true);
+		try {
+			return applyUntil(server, deadlineNanos);
+		} finally {
+			MeowLogger.setPaused(false);
+		}
+	}
+
+	private boolean applyUntil(MinecraftServer server, long deadlineNanos) {
 		while (next < changes.size()) {
 			if (System.nanoTime() >= deadlineNanos) {
 				return false;

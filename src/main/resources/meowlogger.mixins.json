@@ -11,11 +11,17 @@
 		"CompoundContainerAccessor",
 		"DecorationHurtMixin",
 		"DecorationInteractMixin",
+		"FallingBlockEntityMixin",
 		"FireBlockMixin",
+		"FlowingFluidMixin",
+		"ItemEntityMixin",
+		"LavaFluidMixin",
 		"LecternMenuMixin",
+		"LiquidBlockMixin",
 		"ServerExplosionMixin",
 		"ServerLevelMixin",
-		"ServerPlayerGameModeMixin"
+		"ServerPlayerGameModeMixin",
+		"ServerPlayerMixin"
 	],
 	"injectors": {
 		"defaultRequire": 1

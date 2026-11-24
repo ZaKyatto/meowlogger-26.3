@@ -135,25 +135,6 @@ public final class BlockCapture {
 		log(type, ActionRecord.PLAYER_SOURCE, player, level, pos, oldState, null, newState, null);
 	}
 
-	/**
-	 * Logs a block that fire burned away or replaced with fire, crediting whoever lit the fire.
-	 *
-	 * @param igniterId   UUID of the player who lit the fire this spread from, or null if unknown
-	 * @param igniterName that player's name, or null
-	 */
-	public static void logBurn(Level level, BlockPos pos, BlockState oldState, CompoundTag oldData, UUID igniterId, String igniterName) {
-		BlockState newState = level.getBlockState(pos);
-		if (newState != oldState) {
-			log(ActionType.BLOCK_BREAK, FIRE_SOURCE, igniterId, igniterName, level, pos, oldState, oldData, newState,
-					newState.hasBlockEntity() ? save(level, level.getBlockEntity(pos)) : null);
-		}
-	}
-
-	/** Logs fire spreading into an empty space, crediting whoever lit the fire it spread from. */
-	public static void logSpread(Level level, BlockPos pos, BlockState oldState, UUID igniterId, String igniterName) {
-		log(ActionType.BLOCK_PLACE, FIRE_SOURCE, igniterId, igniterName, level, pos, oldState, null, level.getBlockState(pos), null);
-	}
-
 	/** Captures the blocks an explosion is about to destroy, and the blocks around them that may pop off. */
 	public static Snapshot snapshot(Level level, List<BlockPos> positions) {
 		return snapshot(level, positions, Set.of());
@@ -249,9 +230,19 @@ public final class BlockCapture {
 				level, pos, oldState, oldData, newState, newData);
 	}
 
+	/** Logs a block change caused by {@code responsible}, which may be null. */
+	static void log(ActionType type, String source, Lineage.Responsible responsible, Level level, BlockPos pos,
+			BlockState oldState, CompoundTag oldData, BlockState newState, CompoundTag newData) {
+		log(type, source, responsible == null ? null : responsible.id(), responsible == null ? null : responsible.name(),
+				level, pos, oldState, oldData, newState, newData);
+	}
+
 	private static void log(ActionType type, String source, UUID playerId, String playerName, Level level, BlockPos pos,
 			BlockState oldState, CompoundTag oldData, BlockState newState, CompoundTag newData) {
 		InteractionCapture.markLogged(pos);
+		if (playerId != null) {
+			FallingCapture.blockChanged(level, pos, new Lineage.Responsible(playerId, playerName));
+		}
 		MeowLogger.log(new ActionRecord(System.currentTimeMillis(), type, source, playerId, playerName,
 				level.dimension(), pos, oldState, oldData, newState, newData, null));
 	}
