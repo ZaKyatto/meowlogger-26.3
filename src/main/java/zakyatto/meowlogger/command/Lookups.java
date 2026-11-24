@@ -42,7 +42,7 @@ public final class Lookups {
 			return;
 		}
 		sessions.put(sessionKey(source), new Session(filter, title));
-		service.lookup(filter, page)
+		service.lookup(filter, page, MeowLogger.config().lookupPageSize())
 				.handleAsync((result, error) -> {
 					if (error != null) {
 						MeowLogger.LOGGER.error("Lookup failed", error);
@@ -88,7 +88,8 @@ public final class Lookups {
 		}
 	}
 
-	private static UUID sessionKey(CommandSourceStack source) {
+	/** Identifies a command source across commands: its entity's UUID, or a shared key for the console and command blocks. */
+	static UUID sessionKey(CommandSourceStack source) {
 		Entity entity = source.getEntity();
 		return entity != null ? entity.getUUID() : Util.NIL_UUID;
 	}

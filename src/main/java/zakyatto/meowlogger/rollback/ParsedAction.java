@@ -19,6 +19,7 @@ import net.minecraft.core.registries.Registries;
 import net.minecraft.nbt.CompoundTag;
 import net.minecraft.resources.Identifier;
 import net.minecraft.resources.ResourceKey;
+import net.minecraft.world.entity.EntityType;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.level.block.state.BlockState;
 
@@ -30,20 +31,22 @@ import zakyatto.meowlogger.storage.NbtBlobs;
 /**
  * A logged action parsed into game objects, ready to be undone or redone on the server thread.
  *
- * @param oldState for item actions, the container's state
- * @param newState for item actions, the container's state
+ * @param oldState for item actions, the container's state; null for entity actions
+ * @param oldData  for entity actions, the entity's saved data
+ * @param newState for item actions, the container's state; null for entity actions
  * @param items    for item actions, the moved items; otherwise null
+ * @param entity   for entity actions, the entity's type; otherwise null
  */
-record BlockChange(long id, ActionType type, ResourceKey<Level> world, BlockPos pos, BlockState oldState, CompoundTag oldData,
-		BlockState newState, CompoundTag newData, ItemData items) {
+record ParsedAction(long id, ActionType type, ResourceKey<Level> world, BlockPos pos, BlockState oldState, CompoundTag oldData,
+		BlockState newState, CompoundTag newData, ItemData items, EntityType<?> entity) {
 	/**
 	 * Parsed lookup results.
 	 *
 	 * @param conflicts number of actions left out because a later action by someone else changed the same block
 	 * @param invalid   number of actions left out because their world, block, properties, block entity
-	 *                  data or item no longer parse (for example something from a removed mod)
+	 *                  data, item or entity type no longer parse (for example something from a removed mod)
 	 */
-	record Parsed(List<BlockChange> changes, int conflicts, int invalid) {
+	record Parsed(List<ParsedAction> changes, int conflicts, int invalid) {
 	}
 
 	/**
@@ -53,7 +56,7 @@ record BlockChange(long id, ActionType type, ResourceKey<Level> world, BlockPos 
 	static Parsed parseAll(List<LoggedAction> actions, LongSet conflicting, HolderLookup.Provider registries) {
 		Map<String, Optional<BlockState>> states = new HashMap<>();
 		Map<String, ResourceKey<Level>> worlds = new HashMap<>();
-		List<BlockChange> changes = new ArrayList<>(actions.size());
+		List<ParsedAction> changes = new ArrayList<>(actions.size());
 		int conflicts = 0;
 		int invalid = 0;
 		for (LoggedAction action : actions) {
@@ -61,7 +64,7 @@ record BlockChange(long id, ActionType type, ResourceKey<Level> world, BlockPos 
 				conflicts++;
 				continue;
 			}
-			BlockChange change = parse(action, states, worlds, registries);
+			ParsedAction change = parse(action, states, worlds, registries);
 			if (change == null) {
 				invalid++;
 			} else {
@@ -71,13 +74,12 @@ record BlockChange(long id, ActionType type, ResourceKey<Level> world, BlockPos 
 		return new Parsed(changes, conflicts, invalid);
 	}
 
-	private static BlockChange parse(LoggedAction action, Map<String, Optional<BlockState>> states,
+	private static ParsedAction parse(LoggedAction action, Map<String, Optional<BlockState>> states,
 			Map<String, ResourceKey<Level>> worlds, HolderLookup.Provider registries) {
 		ResourceKey<Level> world = worlds.computeIfAbsent(action.world(), name -> {
 			Identifier id = Identifier.tryParse(name);
 			return id == null ? null : ResourceKey.create(Registries.DIMENSION, id);
 		});
-		BlockState oldState = parseState(action.oldObject(), action.oldState(), states);
 		CompoundTag oldData;
 		CompoundTag newData;
 		try {
@@ -86,17 +88,28 @@ record BlockChange(long id, ActionType type, ResourceKey<Level> world, BlockPos 
 		} catch (IOException e) {
 			return null;
 		}
-		if (world == null || oldState == null) {
+		if (world == null) {
 			return null;
 		}
 		BlockPos pos = new BlockPos(action.x(), action.y(), action.z());
-		if (action.type().isBlockChange()) {
+		if (action.type().kind() == ActionType.Kind.ENTITY) {
+			Identifier typeId = Identifier.tryParse(action.oldObject());
+			Optional<EntityType<?>> type = typeId == null ? Optional.empty() : BuiltInRegistries.ENTITY_TYPE.getOptional(typeId);
+			return type.isEmpty() || oldData == null ? null
+					: new ParsedAction(action.id(), action.type(), world, pos, null, oldData, null, null, null, type.get());
+		}
+		BlockState oldState = parseState(action.oldObject(), action.oldState(), states);
+		if (oldState == null) {
+			return null;
+		}
+		if (action.type().kind() == ActionType.Kind.BLOCK) {
 			BlockState newState = parseState(action.newObject(), action.newState(), states);
-			return newState == null ? null : new BlockChange(action.id(), action.type(), world, pos, oldState, oldData, newState, newData, null);
+			return newState == null ? null
+					: new ParsedAction(action.id(), action.type(), world, pos, oldState, oldData, newState, newData, null, null);
 		}
 		// Item actions: new_object is the item, and new_data holds the moved items.
 		Optional<ItemData> items = newData == null ? Optional.empty() : ItemData.decode(newData, registries);
-		return items.map(moved -> new BlockChange(action.id(), action.type(), world, pos, oldState, null, oldState, null, moved))
+		return items.map(moved -> new ParsedAction(action.id(), action.type(), world, pos, oldState, null, oldState, null, moved, null))
 				.orElse(null);
 	}
 

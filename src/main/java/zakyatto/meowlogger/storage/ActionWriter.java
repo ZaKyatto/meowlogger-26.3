@@ -4,12 +4,16 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Queue;
 import java.util.concurrent.BlockingQueue;
+import java.util.concurrent.CancellationException;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicLong;
 
 import zakyatto.meowlogger.MeowLogger;
 import zakyatto.meowlogger.action.ActionRecord;
+import zakyatto.meowlogger.query.ActionFilter;
 
 /**
  * Owns a background thread that drains queued actions and writes them to a {@link Database} in
@@ -19,15 +23,32 @@ import zakyatto.meowlogger.action.ActionRecord;
 public final class ActionWriter implements AutoCloseable {
 	private static final int MAX_BATCH_SIZE = 1_000;
 	private static final int MAX_WRITE_ATTEMPTS = 3;
+	private static final int PURGE_CHUNK_SIZE = 10_000;
 
 	// shortcut: unbounded, so a database that stays down grows memory; add a cap + drop counter if that shows up in practice
 	private final BlockingQueue<ActionRecord> queue = new LinkedBlockingQueue<>();
 	private final Queue<FlagUpdate> flagUpdates = new ConcurrentLinkedQueue<>();
+	private final Queue<Purge> purges = new ConcurrentLinkedQueue<>();
+	private final AtomicLong submitted = new AtomicLong();
+	private long processed; // writer thread only
 	private final Database database;
 	private final Thread thread;
 	private volatile boolean running = true;
 
 	private record FlagUpdate(long[] ids, boolean rolledBack) {
+	}
+
+	private static final class Purge {
+		final ActionFilter filter;
+		/** The purge starts once this many submitted actions have been processed, so it also covers those. */
+		final long startAfter;
+		final CompletableFuture<Integer> result = new CompletableFuture<>();
+		int deleted;
+
+		Purge(ActionFilter filter, long startAfter) {
+			this.filter = filter;
+			this.startAfter = startAfter;
+		}
 	}
 
 	/** Takes ownership of {@code database} and starts the writer thread. */
@@ -38,6 +59,7 @@ public final class ActionWriter implements AutoCloseable {
 
 	/** Queues an action for writing. */
 	public void submit(ActionRecord record) {
+		submitted.incrementAndGet();
 		queue.add(record);
 	}
 
@@ -46,12 +68,27 @@ public final class ActionWriter implements AutoCloseable {
 		flagUpdates.add(new FlagUpdate(ids, rolledBack));
 	}
 
+	/**
+	 * Queues a permanent deletion of the actions matching {@code filter}, after the actions queued so
+	 * far are written. Large purges run in chunks between batches, so logging continues meanwhile.
+	 * The future completes on the writer thread with the number of deleted actions, or exceptionally
+	 * if the database fails or the writer is closed first.
+	 */
+	public CompletableFuture<Integer> submitPurge(ActionFilter filter) {
+		if (!running) {
+			return CompletableFuture.failedFuture(new IllegalStateException("The writer is closed"));
+		}
+		Purge purge = new Purge(filter, submitted.get());
+		purges.add(purge);
+		return purge.result;
+	}
+
 	private void run() {
 		List<ActionRecord> batch = new ArrayList<>(MAX_BATCH_SIZE);
 		while (running || !queue.isEmpty() || !flagUpdates.isEmpty()) {
 			ActionRecord first;
 			try {
-				first = queue.poll(250, TimeUnit.MILLISECONDS);
+				first = purges.isEmpty() || !running ? queue.poll(250, TimeUnit.MILLISECONDS) : queue.poll();
 			} catch (InterruptedException e) {
 				continue; // only close() stops this thread, via the running flag
 			}
@@ -59,6 +96,7 @@ public final class ActionWriter implements AutoCloseable {
 				batch.add(first);
 				queue.drainTo(batch, MAX_BATCH_SIZE - 1);
 				withRetry(batch.size() + " actions", () -> database.write(batch));
+				processed += batch.size();
 				batch.clear();
 			}
 			FlagUpdate update;
@@ -67,6 +105,32 @@ public final class ActionWriter implements AutoCloseable {
 				withRetry("rolled-back flags of " + current.ids().length + " actions",
 						() -> database.setRolledBack(current.ids(), current.rolledBack()));
 			}
+			if (running) {
+				purgeChunk();
+			}
+		}
+		Purge abandoned;
+		while ((abandoned = purges.poll()) != null) {
+			MeowLogger.LOGGER.warn("Server stopped during a purge; {} actions were deleted before it stopped", abandoned.deleted);
+			abandoned.result.completeExceptionally(new CancellationException("The server stopped"));
+		}
+	}
+
+	private void purgeChunk() {
+		Purge purge = purges.peek();
+		if (purge == null || processed < purge.startAfter) {
+			return;
+		}
+		try {
+			int deleted = database.delete(purge.filter, PURGE_CHUNK_SIZE);
+			purge.deleted += deleted;
+			if (deleted < PURGE_CHUNK_SIZE) {
+				purges.poll();
+				purge.result.complete(purge.deleted);
+			}
+		} catch (Exception e) {
+			purges.poll();
+			purge.result.completeExceptionally(e);
 		}
 	}
 

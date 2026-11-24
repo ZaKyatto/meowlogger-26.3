@@ -22,6 +22,12 @@ public interface Database extends AutoCloseable {
 	/** Sets the rolled-back flag of the given actions in a single transaction. Writer thread only. */
 	void setRolledBack(long[] ids, boolean rolledBack) throws SQLException;
 
+	/**
+	 * Permanently deletes up to {@code limit} actions matching {@code filter} in one transaction and
+	 * returns how many were deleted; fewer than {@code limit} means none are left. Writer thread only.
+	 */
+	int delete(ActionFilter filter, int limit) throws SQLException;
+
 	/** Counts the stored actions matching {@code filter}. */
 	int count(ActionFilter filter) throws SQLException;
 

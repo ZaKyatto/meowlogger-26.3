@@ -1,0 +1,61 @@
+// MeowLogger configuration
+//
+// Edit this file, then run /ml reload (or restart the server).
+// - An invalid value falls back to its default; the problem is shown in the server log
+//   and when you hover over the /ml reload reply.
+// - If the file is not valid JSON (e.g. a missing comma), the reload is refused and the
+//   current settings stay in effect.
+// - Names may leave out "minecraft:", so "cow" means "minecraft:cow".
+// - The "ignored..." settings only affect new actions; use /ml purge to remove old ones.
+{
+  // Kinds of actions not to log. Possible values:
+  //   "block-break"  blocks broken by players, explosions or fire, and buckets filled
+  //   "block-place"  blocks placed, and buckets emptied
+  //   "item-insert"  items put into a container
+  //   "item-remove"  items taken out of a container
+  //   "entity-kill"  mobs killed
+  // Example: ["item-insert", "item-remove"]
+  "ignoredActions": [],
+
+  // Dimensions in which nothing is logged, e.g. ["the_end"].
+  // Vanilla: "overworld", "the_nether", "the_end". Datapack and mod dimensions work too.
+  "ignoredWorlds": [],
+
+  // Causes not to log; this is the purple name in lookups. Examples:
+  //   "player"                                  anything a player did directly
+  //   "fire"                                    blocks burning away
+  //   "tnt", "creeper", "end_crystal", "wither" explosions
+  //   "arrow", "zombie", "lava", "fall"         what killed a mob
+  "ignoredSources": [],
+
+  // Blocks, items and mobs not to log, e.g. ["short_grass", "furnace", "chicken"].
+  //   Block breaks match the broken block, placements the placed block
+  //   (ignoring "short_grass" still logs stone placed where grass was).
+  //   Item actions match the item OR the container ("furnace" skips all furnace use).
+  //   Kills match the mob.
+  "ignoredObjects": [],
+
+  // Also log kills of ordinary hostile mobs (zombies, skeletons, ...).
+  // Off by default: mob farms would flood the log, and rolling back a player would bring
+  // back every zombie they killed. Name-tagged hostile mobs and all other mobs are always logged.
+  "logHostileMobKills": false,
+
+  // Automatically delete actions older than this many days (0 to 36500).
+  // Checked at startup and then every hour. 0 keeps everything forever.
+  // Freed space is reused for new actions; the database file itself does not shrink.
+  "retentionDays": 0,
+
+  // Most actions a single rollback or restore may touch (1 to 10000000). If more match,
+  // the command refuses and asks you to narrow it down, e.g. with radius: or time:.
+  "maxRollbackActions": 250000,
+
+  // Milliseconds per tick a running rollback may spend changing the world (1 to 45).
+  // A tick is 50 ms. Higher is faster but can lag the server while a rollback runs.
+  "rollbackTickBudgetMillis": 10,
+
+  // Actions per page in /ml lookup and the inspector (1 to 50).
+  "lookupPageSize": 8,
+
+  // Largest radius: allowed in lookups, rollbacks and purges (1 to 10000).
+  "maxRadius": 1000
+}

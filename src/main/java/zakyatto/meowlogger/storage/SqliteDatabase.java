@@ -105,7 +105,7 @@ public final class SqliteDatabase implements Database {
 	}};
 	private static final int SCHEMA_VERSION = MIGRATIONS.length;
 	private static final String BLOCK_CHANGE_TYPES = Arrays.stream(ActionType.values())
-			.filter(ActionType::isBlockChange).map(type -> String.valueOf(type.id())).collect(Collectors.joining(", "));
+			.filter(type -> type.kind() == ActionType.Kind.BLOCK).map(type -> String.valueOf(type.id())).collect(Collectors.joining(", "));
 
 	private static final String LOOKUP_COLUMNS = """
 			SELECT a.id, a.time, a.type, s.name, p.name, w.name, a.x, a.y, a.z,
@@ -212,11 +212,13 @@ public final class SqliteDatabase implements Database {
 				insertAction.setInt(6, record.pos().getX());
 				insertAction.setInt(7, record.pos().getY());
 				insertAction.setInt(8, record.pos().getZ());
-				insertAction.setInt(9, objectId(record.oldState().getBlock()));
-				insertAction.setString(10, properties(record.oldState()));
+				// Block changes store both blocks; item actions the container and the item; entity actions the entity type twice.
+				boolean entity = record.type().kind() == ActionType.Kind.ENTITY;
+				insertAction.setInt(9, entity ? objectId(record.object()) : objectId(record.oldState().getBlock()));
+				insertAction.setString(10, entity ? null : properties(record.oldState()));
 				insertAction.setBytes(11, NbtBlobs.compress(record.oldData()));
-				insertAction.setInt(12, record.item() != null ? objectId(record.item()) : objectId(record.newState().getBlock()));
-				insertAction.setString(13, properties(record.newState()));
+				insertAction.setInt(12, record.object() != null ? objectId(record.object()) : objectId(record.newState().getBlock()));
+				insertAction.setString(13, entity ? null : properties(record.newState()));
 				insertAction.setBytes(14, NbtBlobs.compress(record.newData()));
 				insertAction.addBatch();
 			}
@@ -249,6 +251,25 @@ public final class SqliteDatabase implements Database {
 			}
 			update.executeBatch();
 			connection.commit();
+		} catch (SQLException | RuntimeException e) {
+			try {
+				connection.rollback();
+			} catch (SQLException rollbackFailure) {
+				e.addSuppressed(rollbackFailure);
+			}
+			throw e;
+		}
+	}
+
+	@Override
+	public int delete(ActionFilter filter, int limit) throws SQLException {
+		Where where = Where.of(filter);
+		String sql = "DELETE FROM actions WHERE id IN (SELECT a.id FROM actions a" + where.sql() + " LIMIT ?)";
+		try (PreparedStatement statement = connection.prepareStatement(sql)) {
+			statement.setInt(where.bind(statement, 1), limit);
+			int deleted = statement.executeUpdate();
+			connection.commit();
+			return deleted;
 		} catch (SQLException | RuntimeException e) {
 			try {
 				connection.rollback();
@@ -434,6 +455,10 @@ public final class SqliteDatabase implements Database {
 			if (filter.sinceMillis() > 0) {
 				clauses.add(t + "time >= ?");
 				params.add(filter.sinceMillis());
+			}
+			if (filter.beforeMillis() > 0) {
+				clauses.add(t + "time < ?");
+				params.add(filter.beforeMillis());
 			}
 			return new Where(clauses.isEmpty() ? null : String.join(" AND ", clauses), params);
 		}

@@ -11,6 +11,7 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 import com.mojang.brigadier.exceptions.CommandSyntaxException;
+import com.mojang.brigadier.exceptions.Dynamic2CommandExceptionType;
 import com.mojang.brigadier.exceptions.DynamicCommandExceptionType;
 import com.mojang.brigadier.suggestion.Suggestions;
 import com.mojang.brigadier.suggestion.SuggestionsBuilder;
@@ -33,19 +34,21 @@ import zakyatto.meowlogger.query.ActionFilter;
  * into an {@link ActionFilter}, and suggests completions for them.
  */
 public final class FilterParser {
-	private static final List<String> KEYS = List.of("radius:", "player:", "source:", "action:", "block:", "item:", "time:", "world:");
+	private static final List<String> KEYS = List.of("radius:", "player:", "source:", "action:", "block:", "item:", "entity:", "time:", "before:", "world:");
 	private static final Pattern DURATION_PART = Pattern.compile("(\\d{1,9})([smhdw])");
-	private static final int MAX_RADIUS = 1_000;
 
-	private static final DynamicCommandExceptionType UNKNOWN_KEY = error(key -> "Unknown parameter '" + key + "'. Use one of: radius, player, source, action, block, item, time, world");
+	private static final DynamicCommandExceptionType UNKNOWN_KEY = error(key -> "Unknown parameter '" + key + "'. Use one of: radius, player, source, action, block, item, entity, time, before, world");
 	private static final DynamicCommandExceptionType MALFORMED = error(token -> "Expected key:value, got '" + token + "'");
-	private static final DynamicCommandExceptionType BAD_RADIUS = error(value -> "Radius must be a whole number from 0 to " + MAX_RADIUS + ", got '" + value + "'");
+	private static final Dynamic2CommandExceptionType BAD_RADIUS = new Dynamic2CommandExceptionType((value, max) ->
+			Component.literal("Radius must be a whole number from 0 to " + max + ", got '" + value + "'"));
 	private static final DynamicCommandExceptionType BAD_TIME = error(value -> "Invalid time '" + value + "'. Use e.g. 30m, 2h, 1d12h (units: s, m, h, d, w)");
 	private static final DynamicCommandExceptionType UNKNOWN_ACTION = error(value -> "Unknown action '" + value + "'");
 	private static final DynamicCommandExceptionType UNKNOWN_BLOCK = error(value -> "Unknown block '" + value + "'");
 	private static final DynamicCommandExceptionType UNKNOWN_ITEM = error(value -> "Unknown item '" + value + "'");
+	private static final DynamicCommandExceptionType UNKNOWN_ENTITY = error(value -> "Unknown entity '" + value + "'");
 	private static final DynamicCommandExceptionType BAD_SOURCE = error(value -> "Invalid source '" + value + "'");
-	private static final List<String> COMMON_SOURCES = List.of("player", "tnt", "creeper", "fire", "end_crystal", "tnt_minecart", "fireball", "wither", "bad_respawn_point");
+	private static final List<String> COMMON_SOURCES = List.of("player", "tnt", "creeper", "fire", "end_crystal", "tnt_minecart", "fireball", "wither", "bad_respawn_point",
+			"arrow", "lava", "fall", "drown", "zombie", "skeleton", "wolf");
 	private static final DynamicCommandExceptionType BAD_WORLD = error(value -> "Invalid world '" + value + "'");
 
 	private FilterParser() {
@@ -56,13 +59,15 @@ public final class FilterParser {
 	 *
 	 * @param sourceWorld dimension of the command source; used for {@code radius} unless {@code world} is given
 	 * @param sourcePos   position of the command source; the center for {@code radius}
-	 * @param nowMillis   current time, used to resolve {@code time}
+	 * @param nowMillis   current time, used to resolve {@code time} and {@code before}
+	 * @param maxRadius   largest allowed {@code radius}
 	 */
-	public static ActionFilter parse(String input, ResourceKey<Level> sourceWorld, BlockPos sourcePos, long nowMillis)
+	public static ActionFilter parse(String input, ResourceKey<Level> sourceWorld, BlockPos sourcePos, long nowMillis, int maxRadius)
 			throws CommandSyntaxException {
 		ResourceKey<Level> world = null;
 		int radius = -1;
 		long sinceMillis = 0;
+		long beforeMillis = 0;
 		Set<String> players = new HashSet<>();
 		Set<ActionType> types = new HashSet<>();
 		Set<String> sources = new HashSet<>();
@@ -76,7 +81,7 @@ public final class FilterParser {
 			String key = token.substring(0, colon).toLowerCase(Locale.ROOT);
 			String value = token.substring(colon + 1);
 			switch (key) {
-				case "radius", "r" -> radius = parseRadius(value);
+				case "radius", "r" -> radius = parseRadius(value, maxRadius);
 				case "player", "p" -> players.addAll(Arrays.asList(value.split(",")));
 				case "action", "a" -> {
 					for (String name : value.split(",")) {
@@ -94,7 +99,9 @@ public final class FilterParser {
 				}
 				case "block", "b" -> addRegistered(value, BuiltInRegistries.BLOCK, UNKNOWN_BLOCK, objects);
 				case "item", "i" -> addRegistered(value, BuiltInRegistries.ITEM, UNKNOWN_ITEM, objects);
+				case "entity", "e" -> addRegistered(value, BuiltInRegistries.ENTITY_TYPE, UNKNOWN_ENTITY, objects);
 				case "time", "t" -> sinceMillis = nowMillis - parseDuration(value);
+				case "before" -> beforeMillis = nowMillis - parseDuration(value);
 				case "world", "w" -> {
 					Identifier id = Identifier.tryParse(value.toLowerCase(Locale.ROOT));
 					if (id == null) {
@@ -116,7 +123,7 @@ public final class FilterParser {
 			min = sourcePos.offset(-radius, -radius, -radius);
 			max = sourcePos.offset(radius, radius, radius);
 		}
-		return new ActionFilter(world, min, max, players, sources, types, objects, Math.max(sinceMillis, 0), null);
+		return new ActionFilter(world, min, max, players, sources, types, objects, Math.max(sinceMillis, 0), Math.max(beforeMillis, 0), null);
 	}
 
 	/** Adds each comma-separated identifier in {@code value} to {@code into}, requiring it to exist in {@code registry}. */
@@ -131,16 +138,16 @@ public final class FilterParser {
 		}
 	}
 
-	private static int parseRadius(String value) throws CommandSyntaxException {
+	private static int parseRadius(String value, int maxRadius) throws CommandSyntaxException {
 		try {
 			int radius = Integer.parseInt(value);
-			if (radius >= 0 && radius <= MAX_RADIUS) {
+			if (radius >= 0 && radius <= maxRadius) {
 				return radius;
 			}
 		} catch (NumberFormatException ignored) {
 			// reported below
 		}
-		throw BAD_RADIUS.create(value);
+		throw BAD_RADIUS.create(value, maxRadius);
 	}
 
 	/** Parses durations like {@code 1d12h} into milliseconds. */
@@ -187,8 +194,9 @@ public final class FilterParser {
 			case "action", "a" -> SharedSuggestionProvider.suggest(Arrays.stream(ActionType.values()).map(ActionType::key), value);
 			case "block", "b" -> SharedSuggestionProvider.suggestResource(BuiltInRegistries.BLOCK.keySet(), value);
 			case "item", "i" -> SharedSuggestionProvider.suggestResource(BuiltInRegistries.ITEM.keySet(), value);
+			case "entity", "e" -> SharedSuggestionProvider.suggestResource(BuiltInRegistries.ENTITY_TYPE.keySet(), value);
 			case "world", "w" -> SharedSuggestionProvider.suggestResource(source.levels().stream().map(ResourceKey::identifier), value);
-			case "time", "t" -> SharedSuggestionProvider.suggest(List.of("30m", "1h", "12h", "1d", "7d"), value);
+			case "time", "t", "before" -> SharedSuggestionProvider.suggest(List.of("30m", "1h", "12h", "1d", "7d"), value);
 			case "radius", "r" -> SharedSuggestionProvider.suggest(List.of("5", "10", "25", "50"), value);
 			case "source", "s" -> SharedSuggestionProvider.suggest(COMMON_SOURCES, value);
 			default -> value.buildFuture();

@@ -46,7 +46,7 @@ class SqliteDatabaseTest {
 	private static final UUID OTHER = UUID.fromString("00000000-0000-0000-0000-000000000002");
 	private static BlockState AIR;
 	private static final BlockPos ORIGIN = new BlockPos(1, -64, 3);
-	private static final ActionFilter ALL = new ActionFilter(null, null, null, Set.of(), Set.of(), Set.of(), Set.of(), 0, null);
+	private static final ActionFilter ALL = new ActionFilter(null, null, null, Set.of(), Set.of(), Set.of(), Set.of(), 0, 0, null);
 
 	@TempDir
 	Path dir;
@@ -119,8 +119,8 @@ class SqliteDatabaseTest {
 			assertNull(place.newData());
 
 			assertEquals(4, db.count(ALL));
-			assertEquals(3, db.count(new ActionFilter(Level.OVERWORLD, new BlockPos(0, -70, 0), new BlockPos(12, 80, 12), Set.of(), Set.of(), Set.of(), Set.of(), 0, null)));
-			assertEquals(2, db.count(new ActionFilter(Level.OVERWORLD, new BlockPos(0, -70, 0), new BlockPos(12, 69, 12), Set.of(), Set.of(), Set.of(), Set.of(), 0, null)), "y is bounded too");
+			assertEquals(3, db.count(new ActionFilter(Level.OVERWORLD, new BlockPos(0, -70, 0), new BlockPos(12, 80, 12), Set.of(), Set.of(), Set.of(), Set.of(), 0, 0, null)));
+			assertEquals(2, db.count(new ActionFilter(Level.OVERWORLD, new BlockPos(0, -70, 0), new BlockPos(12, 69, 12), Set.of(), Set.of(), Set.of(), Set.of(), 0, 0, null)), "y is bounded too");
 			assertEquals(2, db.count(filter(Set.of("mEoW"), Set.of(), Set.of(), 0)), "player names are case-insensitive");
 			assertEquals(4, db.count(filter(Set.of("meow", "other"), Set.of(), Set.of(), 0)));
 			assertEquals(0, db.count(filter(Set.of("nobody"), Set.of(), Set.of(), 0)));
@@ -139,7 +139,7 @@ class SqliteDatabaseTest {
 	void positionLookupsUseTheIndex() throws SQLException {
 		Path file = dir.resolve("plan.sqlite");
 		new SqliteDatabase(file).close();
-		SqliteDatabase.Where where = SqliteDatabase.Where.of(new ActionFilter(Level.OVERWORLD, ORIGIN, ORIGIN.offset(5, 5, 5), Set.of(), Set.of(), Set.of(), Set.of(), 0, null));
+		SqliteDatabase.Where where = SqliteDatabase.Where.of(new ActionFilter(Level.OVERWORLD, ORIGIN, ORIGIN.offset(5, 5, 5), Set.of(), Set.of(), Set.of(), Set.of(), 0, 0, null));
 		try (Connection c = open(file); PreparedStatement s = c.prepareStatement("EXPLAIN QUERY PLAN SELECT COUNT(*) FROM actions a" + where.sql())) {
 			where.bind(s, 1);
 			StringBuilder plan = new StringBuilder();
@@ -220,6 +220,46 @@ class SqliteDatabaseTest {
 	}
 
 	@Test
+	void deletesMatchingActionsInChunks() throws SQLException {
+		try (SqliteDatabase db = new SqliteDatabase(dir.resolve("purge.sqlite"))) {
+			db.write(List.of(
+					record(1_000, ActionType.BLOCK_BREAK, MEOW, "Meow", Level.OVERWORLD, ORIGIN, Blocks.STONE.defaultBlockState(), AIR),
+					record(2_000, ActionType.BLOCK_BREAK, MEOW, "Meow", Level.OVERWORLD, ORIGIN, Blocks.STONE.defaultBlockState(), AIR),
+					record(3_000, ActionType.BLOCK_BREAK, OTHER, "Other", Level.OVERWORLD, ORIGIN, Blocks.STONE.defaultBlockState(), AIR),
+					record(9_000, ActionType.BLOCK_BREAK, MEOW, "Meow", Level.OVERWORLD, ORIGIN, Blocks.STONE.defaultBlockState(), AIR)));
+			ActionFilter oldMeow = new ActionFilter(null, null, null, Set.of("meow"), Set.of(), Set.of(), Set.of(), 0, 5_000, null);
+
+			assertEquals(2, ids(db, oldMeow).size(), "before: excludes actions at or after its time");
+			assertEquals(1, db.delete(oldMeow, 1));
+			assertEquals(1, db.delete(oldMeow, 1));
+			assertEquals(0, db.delete(oldMeow, 1));
+			assertEquals(List.of(4L, 3L), ids(db, ALL));
+		}
+	}
+
+	@Test
+	void storesEntityKillsWithoutBlockStatesAndNeverAsConflicts() throws SQLException, IOException {
+		CompoundTag cow = new CompoundTag();
+		cow.putString("id", "minecraft:cow");
+		cow.putFloat("Health", 0);
+		try (SqliteDatabase db = new SqliteDatabase(dir.resolve("entities.sqlite"))) {
+			db.write(List.of(
+					record(1, ActionType.BLOCK_BREAK, MEOW, "Meow", Level.OVERWORLD, ORIGIN, Blocks.GRASS_BLOCK.defaultBlockState(), AIR),
+					new ActionRecord(2, ActionType.ENTITY_KILL, "minecraft:arrow", OTHER, "Other", Level.OVERWORLD, ORIGIN,
+							null, cow, null, null, "minecraft:cow")));
+
+			LoggedAction kill = db.lookup(filter(Set.of(), Set.of(), Set.of("minecraft:cow"), 0), 0, 10).getFirst();
+			assertEquals(List.of(2L, ActionType.ENTITY_KILL, "minecraft:arrow", "Other", "minecraft:cow", "minecraft:cow"),
+					List.of(kill.id(), kill.type(), kill.source(), kill.playerName(), kill.oldObject(), kill.newObject()));
+			assertNull(kill.oldState());
+			assertNull(kill.newData());
+			assertEquals(cow, NbtIo.readCompressed(new ByteArrayInputStream(kill.oldData()), NbtAccounter.unlimitedHeap()));
+			assertArrayEquals(new long[0], db.conflicting(filter(Set.of("Meow"), Set.of(), Set.of(), 0).withRolledBack(false)),
+					"someone killing a mob where Meow broke a block doesn't stop the break being rolled back");
+		}
+	}
+
+	@Test
 	void findsActionsOverriddenByLaterOutsideActions() throws SQLException {
 		BlockPos other = new BlockPos(50, 64, 50);
 		try (SqliteDatabase db = new SqliteDatabase(dir.resolve("conflicts.sqlite"))) {
@@ -295,7 +335,7 @@ class SqliteDatabaseTest {
 	}
 
 	private static ActionFilter filter(Set<String> players, Set<ActionType> types, Set<String> objects, long since) {
-		return new ActionFilter(null, null, null, players, Set.of(), types, objects, since, null);
+		return new ActionFilter(null, null, null, players, Set.of(), types, objects, since, 0, null);
 	}
 
 	private static ActionRecord record(long time, ActionType type, UUID player, String name, ResourceKey<Level> world,
@@ -311,7 +351,7 @@ class SqliteDatabaseTest {
 	}
 
 	private static ActionFilter sourceFilter(String source) {
-		return new ActionFilter(null, null, null, Set.of(), Set.of(source), Set.of(), Set.of(), 0, null);
+		return new ActionFilter(null, null, null, Set.of(), Set.of(source), Set.of(), Set.of(), 0, 0, null);
 	}
 
 	private static List<Long> ids(SqliteDatabase db, ActionFilter filter) throws SQLException {

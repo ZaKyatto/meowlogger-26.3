@@ -18,8 +18,10 @@ import zakyatto.meowlogger.action.ActionType;
  * @param players     names of responsible players, matched case-insensitively
  * @param sources     sources such as {@code minecraft:player} or {@code minecraft:creeper}
  * @param types       action types
- * @param objects     block identifiers such as {@code minecraft:stone}, matched against the old or new block
- * @param sinceMillis only actions at or after this epoch-millisecond time; 0 for no limit
+ * @param objects     block, item or entity identifiers such as {@code minecraft:stone}, matched against the
+ *                    old or new object
+ * @param sinceMillis  only actions at or after this epoch-millisecond time; 0 for no limit
+ * @param beforeMillis only actions before this epoch-millisecond time; 0 for no limit
  * @param rolledBack  only actions that are (true) or are not (false) currently rolled back, or null for both
  */
 public record ActionFilter(
@@ -31,6 +33,7 @@ public record ActionFilter(
 		Set<ActionType> types,
 		Set<String> objects,
 		long sinceMillis,
+		long beforeMillis,
 		Boolean rolledBack
 ) {
 	public ActionFilter {
@@ -49,12 +52,18 @@ public record ActionFilter(
 
 	/** Filter for every action at exactly one block. */
 	public static ActionFilter at(ResourceKey<Level> world, BlockPos pos) {
-		return new ActionFilter(world, pos, pos, Set.of(), Set.of(), Set.of(), Set.of(), 0, null);
+		return new ActionFilter(world, pos, pos, Set.of(), Set.of(), Set.of(), Set.of(), 0, 0, null);
 	}
 
 	/** Copy of this filter restricted to actions that are (or are not) rolled back. */
 	public ActionFilter withRolledBack(boolean value) {
-		return new ActionFilter(world, min, max, players, sources, types, objects, sinceMillis, value);
+		return new ActionFilter(world, min, max, players, sources, types, objects, sinceMillis, beforeMillis, value);
+	}
+
+	/** Whether this filter matches every action. */
+	public boolean matchesEverything() {
+		return world == null && min == null && players.isEmpty() && sources.isEmpty() && types.isEmpty() && objects.isEmpty()
+				&& sinceMillis <= 0 && beforeMillis <= 0 && rolledBack == null;
 	}
 
 	/** Whether this filter limits the search by area or player, as rollback and restore require. */

@@ -5,14 +5,22 @@ import java.time.Instant;
 import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
 import java.util.Optional;
+import java.util.UUID;
 
 import net.minecraft.ChatFormatting;
 import net.minecraft.core.HolderLookup;
+import net.minecraft.core.UUIDUtil;
+import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.nbt.CompoundTag;
+import net.minecraft.nbt.NbtOps;
 import net.minecraft.network.chat.ClickEvent;
 import net.minecraft.network.chat.Component;
 import net.minecraft.network.chat.HoverEvent;
+import net.minecraft.network.chat.ComponentSerialization;
 import net.minecraft.network.chat.MutableComponent;
+import net.minecraft.resources.Identifier;
+import net.minecraft.world.entity.Entity;
+import net.minecraft.world.entity.EntityType;
 
 import zakyatto.meowlogger.action.ActionRecord;
 import zakyatto.meowlogger.action.ActionType;
@@ -51,6 +59,7 @@ final class LookupMessages {
 			case BLOCK_PLACE -> Component.literal("placed").withStyle(ChatFormatting.GREEN);
 			case ITEM_INSERT -> Component.literal("added").withStyle(ChatFormatting.GREEN);
 			case ITEM_REMOVE -> Component.literal("took").withStyle(ChatFormatting.RED);
+			case ENTITY_KILL -> Component.literal("killed").withStyle(ChatFormatting.RED);
 		};
 		Component what = switch (action.type()) {
 			case BLOCK_BREAK -> block(action.oldObject(), action);
@@ -59,6 +68,7 @@ final class LookupMessages {
 					.append(items(action, registries))
 					.append(Component.literal(action.type() == ActionType.ITEM_INSERT ? " to " : " from ").withStyle(ChatFormatting.GRAY))
 					.append(Component.literal(shortName(action.oldObject())).withStyle(ChatFormatting.YELLOW));
+			case ENTITY_KILL -> entity(action, registries);
 		};
 
 		Component when = Component.literal(ago(nowMillis - action.timeMillis())).withStyle(style -> style
@@ -110,6 +120,30 @@ final class LookupMessages {
 		return Component.literal(count + shortName(action.newObject())).withStyle(style -> style
 				.withColor(ChatFormatting.YELLOW)
 				.withHoverEvent(hover));
+	}
+
+	/**
+	 * "cow", or {@code cow "Bessie"} if it was named, hovering to show the entity's tooltip when its
+	 * data still decodes.
+	 */
+	private static Component entity(LoggedAction action, HolderLookup.Provider registries) {
+		CompoundTag data;
+		try {
+			data = NbtBlobs.decompress(action.oldData());
+		} catch (IOException e) {
+			data = null;
+		}
+		Optional<EntityType<?>> type = Optional.ofNullable(Identifier.tryParse(action.oldObject()))
+				.flatMap(BuiltInRegistries.ENTITY_TYPE::getOptional);
+		Optional<UUID> uuid = data == null ? Optional.empty() : data.read(Entity.TAG_UUID, UUIDUtil.CODEC);
+		Optional<Component> name = data == null ? Optional.empty()
+				: data.read(Entity.TAG_CUSTOM_NAME, ComponentSerialization.CODEC, registries.createSerializationContext(NbtOps.INSTANCE));
+		HoverEvent hover = type.isPresent() && uuid.isPresent()
+				? new HoverEvent.ShowEntity(new HoverEvent.EntityTooltipInfo(type.get(), uuid.get(), name))
+				: new HoverEvent.ShowText(Component.literal(action.oldObject()));
+		MutableComponent text = Component.literal(shortName(action.oldObject()));
+		name.ifPresent(custom -> text.append(" \"").append(custom).append("\""));
+		return text.withStyle(style -> style.withColor(ChatFormatting.YELLOW).withHoverEvent(hover));
 	}
 
 	/** "Steve" for a direct player action, "Steve (tnt)" for one a player caused indirectly, "creeper" for no player. */

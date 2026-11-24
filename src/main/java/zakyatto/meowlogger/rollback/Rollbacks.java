@@ -3,6 +3,7 @@ package zakyatto.meowlogger.rollback;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.CompletionException;
+import java.util.stream.Collectors;
 
 import net.fabricmc.fabric.api.event.lifecycle.v1.ServerTickEvents;
 
@@ -16,18 +17,16 @@ import net.minecraft.network.chat.MutableComponent;
 import net.minecraft.server.MinecraftServer;
 
 import zakyatto.meowlogger.MeowLogger;
+import zakyatto.meowlogger.config.MeowConfig;
 import zakyatto.meowlogger.query.ActionFilter;
 import zakyatto.meowlogger.query.LookupService;
 
 /**
  * Runs rollbacks and restores, one at a time. Matching actions are loaded and parsed off the server
- * thread, then applied on it in slices of at most {@link #TICK_BUDGET_NANOS} per tick. Server thread only.
+ * thread, then applied on it in time-limited slices per tick (see {@link MeowConfig#rollbackTickBudgetMillis()}).
+ * Server thread only.
  */
 public final class Rollbacks {
-	/** Largest number of actions a single rollback or restore may touch. */
-	public static final int MAX_ACTIONS = 250_000;
-	private static final long TICK_BUDGET_NANOS = 10_000_000L;
-
 	private static boolean busy;
 	private static RollbackTask active;
 
@@ -57,8 +56,8 @@ public final class Rollbacks {
 		}
 		busy = true;
 		HolderLookup.Provider registries = source.getServer().registryAccess();
-		lookups.lookupForRollback(filter.withRolledBack(restore), MAX_ACTIONS,
-						(actions, conflicts) -> BlockChange.parseAll(actions, conflicts, registries))
+		lookups.lookupForRollback(filter.withRolledBack(restore), MeowLogger.config().maxRollbackActions(),
+						(actions, conflicts) -> ParsedAction.parseAll(actions, conflicts, registries))
 				.handleAsync((parsed, error) -> {
 					begin(source, parameters, restore, parsed, error);
 					return null;
@@ -70,7 +69,7 @@ public final class Rollbacks {
 				});
 	}
 
-	private static void begin(CommandSourceStack source, String parameters, boolean restore, BlockChange.Parsed parsed, Throwable error) {
+	private static void begin(CommandSourceStack source, String parameters, boolean restore, ParsedAction.Parsed parsed, Throwable error) {
 		if (!busy) {
 			return; // the server stopped in the meantime
 		}
@@ -85,7 +84,7 @@ public final class Rollbacks {
 			}
 			return;
 		}
-		List<BlockChange> changes = restore ? parsed.changes().reversed() : parsed.changes();
+		List<ParsedAction> changes = restore ? parsed.changes().reversed() : parsed.changes();
 		RollbackTask task = new RollbackTask(source, parameters, restore, changes, parsed.conflicts(), parsed.invalid());
 		if (task.total() == 0) {
 			busy = false;
@@ -100,14 +99,14 @@ public final class Rollbacks {
 	}
 
 	private static void tick(MinecraftServer server) {
-		if (active != null && active.run(server, System.nanoTime() + TICK_BUDGET_NANOS)) {
+		if (active != null && active.run(server, System.nanoTime() + MeowLogger.config().rollbackTickBudgetMillis() * 1_000_000L)) {
 			RollbackTask task = active;
 			active = null;
 			busy = false;
 			int applied = record(task);
-			MeowLogger.LOGGER.info("{} {} {} actions ({} conflicting, {} invalid, {} unapplicable skipped) matching '{}'",
-					task.source().getTextName(), task.restore() ? "restored" : "rolled back", applied,
-					task.conflicts(), task.invalid(), task.unapplied(), task.parameters());
+			MeowLogger.LOGGER.info("{} {} {} actions {} ({} conflicting, {} invalid, {} unapplicable skipped) matching '{}'",
+					task.source().getTextName(), task.restore() ? "restored" : "rolled back", applied, task.appliedByType(),
+					task.conflicts(), task.invalid(), task.unappliedItems() + task.unappliedEntities(), task.parameters());
 			task.source().sendSystemMessage(summary(task, applied));
 		}
 	}
@@ -132,19 +131,29 @@ public final class Rollbacks {
 	}
 
 	private static Component summary(RollbackTask task, int applied) {
+		String breakdown = task.appliedByType().entrySet().stream()
+				.map(entry -> entry.getKey().key() + ": " + entry.getValue())
+				.collect(Collectors.joining("\n"));
 		Component message = prefix().append(Component.literal((task.restore() ? "Restored " : "Rolled back ") + applied
-				+ (applied == 1 ? " action" : " actions") + " in " + task.elapsedMillis() / 1000.0 + "s").withStyle(ChatFormatting.GREEN));
-		int skipped = task.conflicts() + task.invalid() + task.unapplied();
+				+ (applied == 1 ? " action" : " actions") + " in " + task.elapsedMillis() / 1000.0 + "s").withStyle(style -> style
+				.withColor(ChatFormatting.GREEN)
+				.withHoverEvent(breakdown.isEmpty() ? null : new HoverEvent.ShowText(Component.literal(breakdown)))));
+		int skipped = task.conflicts() + task.invalid() + task.unappliedItems() + task.unappliedEntities();
 		if (skipped > 0) {
-			List<String> lines = new ArrayList<>(3);
+			List<String> lines = new ArrayList<>(4);
 			if (task.conflicts() > 0) {
 				lines.add(task.conflicts() + " because someone else changed the block later");
 			}
 			if (task.invalid() > 0) {
 				lines.add(task.invalid() + " because the world, block or item no longer exists");
 			}
-			if (task.unapplied() > 0) {
-				lines.add(task.unapplied() + " item moves because the container is gone, full, or no longer has the items");
+			if (task.unappliedItems() > 0) {
+				lines.add(task.unappliedItems() + " item moves because the container is gone, full, or no longer has the items");
+			}
+			if (task.unappliedEntities() > 0) {
+				lines.add(task.unappliedEntities() + (task.restore()
+						? " entity kills because the entity is gone or not loaded"
+						: " entity kills because the entity is alive already"));
 			}
 			Component reasons = Component.literal(String.join("\n", lines));
 			message = Component.empty().append(message).append(Component.literal(", skipped " + skipped).withStyle(style -> style

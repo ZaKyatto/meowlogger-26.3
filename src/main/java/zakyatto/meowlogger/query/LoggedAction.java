@@ -7,12 +7,15 @@ import zakyatto.meowlogger.action.ActionType;
  *
  * @param source     what caused the action, e.g. {@code minecraft:player} or {@code minecraft:creeper}
  * @param playerName name of the responsible player, or null if none
- * @param oldObject  block identifier before the action, e.g. {@code minecraft:stone}
+ * @param oldObject  block identifier before the action, e.g. {@code minecraft:stone}; for item actions,
+ *                   the container block; for entity actions, the entity type
  * @param oldState   block state properties before the action, e.g. {@code [axis=y]}, or null if none
- * @param oldData    gzip-compressed NBT of the block entity before the action, or null if none
- * @param newObject  block identifier after the action
+ * @param oldData    gzip-compressed NBT of the block entity before the action, or null if none; for
+ *                   entity actions, of the entity
+ * @param newObject  block identifier after the action; for item actions, the item; for entity actions, the entity type
  * @param newState   block state properties after the action, or null if none
- * @param newData    gzip-compressed NBT of the block entity after the action, or null if none
+ * @param newData    gzip-compressed NBT of the block entity after the action, or null if none; for item
+ *                   actions, of the moved items
  * @param rolledBack whether the action is currently rolled back
  */
 public record LoggedAction(

@@ -13,14 +13,20 @@ client mod is needed.
 | Blocks destroyed by explosions | the exploding entity, e.g. `tnt`, `creeper`, `end_crystal` | whoever lit or caused it, if known |
 | Blocks burnt by fire | `fire` | none |
 | Items put into or taken out of chests, barrels, shulker boxes, furnaces and other block containers | `player` | the player |
+| Animals, villagers, pets and other non-hostile mobs dying, plus name-tagged hostile mobs | `player`, the weapon (e.g. `arrow`), the attacking mob, or the cause (e.g. `lava`, `fall`) | the killer, if a player |
 
 Block entity data (chest contents, sign text, banner patterns) is saved with each change, so a
 rolled-back chest comes back with its items. Items that dropped when it broke are not removed.
 
 Rolling back an item action puts the items back (or takes them out again), but only if all of them
-fit, or are all still there; otherwise it is skipped and reported. Not logged yet: water and lava
-flow (including cobblestone and obsidian it creates), entities, and books put into lecterns or
-chiseled bookshelves.
+fit, or are all still there; otherwise it is skipped and reported.
+
+Rolling back a kill brings the mob back where it died, with full health, its name, equipment,
+owner and inventory (what it dropped when it died is not removed). Restoring a kill removes it again (without drops), as long as it is still
+loaded. Players and ordinary hostile mobs are not logged.
+
+Not logged yet: water and lava flow (including cobblestone and obsidian it creates), armor stands,
+item frames, paintings and vehicles, and books put into lecterns or chiseled bookshelves.
 
 ## Usage
 
@@ -34,32 +40,45 @@ chiseled bookshelves.
 | `/ml rollback <params>` | Undo matching actions. Needs a `radius:` or `player:` parameter. |
 | `/ml restore <params>` | Redo matching actions that were rolled back. Same parameters as rollback. |
 | `/ml teleport <world> <pos>` | Teleport to a logged position (what clicking a lookup's coordinates runs). |
+| `/ml purge <params>` | Permanently delete matching actions, e.g. `/ml purge before:90d`. Shows how many match and asks you to confirm with `/ml purge confirm` within 60 seconds. |
+| `/ml reload` | Reload `config/meowlogger.json`. |
 
 Rollback and restore skip an action if someone else changed the same block afterwards (according to
 the log), so later work by other players is never overwritten. Changes the log doesn't know about,
 like grass spreading or water flowing in, are overwritten. Up to 250,000 actions can be rolled back at
-once, applied over several ticks so the server doesn't freeze; the result message has an
-**[Undo]** button.
+once (configurable), applied over several ticks so the server doesn't freeze. Hover over the result message to see how
+many actions of each type were undone; it also has an **[Undo]** button.
 
 Lookup parameters can be combined; lists are comma-separated:
 
 | Parameter | Example | Meaning |
 |---|---|---|
-| `radius:` / `r:` | `r:10` | Within 10 blocks of you (0–1000), in your current world |
+| `radius:` / `r:` | `r:10` | Within 10 blocks of you (up to `maxRadius`, 1000 by default), in your current world |
 | `player:` / `p:` | `p:Steve,Alex` | Actions these players did or caused (e.g. TNT they lit) |
 | `source:` / `s:` | `s:creeper,tnt` | Actions with this cause (`player`, `fire`, an entity such as `creeper`) |
-| `action:` / `a:` | `a:item-remove` | `block-break`, `block-place`, `item-insert`, `item-remove` |
+| `action:` / `a:` | `a:item-remove` | `block-break`, `block-place`, `item-insert`, `item-remove`, `entity-kill` |
 | `block:` / `b:` | `b:diamond_ore` | Actions involving this block (before or after), or this container |
 | `item:` / `i:` | `i:diamond` | Item actions moving this item |
+| `entity:` / `e:` | `e:cow,horse` | Kills of this kind of mob |
 | `time:` / `t:` | `t:1d12h` | Within this time (`s`, `m`, `h`, `d`, `w`) |
+| `before:` | `before:30d` | Longer ago than this |
 | `world:` / `w:` | `w:the_nether` | Only this dimension |
 
 Example: `/ml l r:20 a:block-break b:chest t:2d`
 
 ### Permissions
 
-The permission nodes `meowlogger:lookup`, `meowlogger:inspect`, `meowlogger:rollback` and
-`meowlogger:teleport` can be granted by a permission mod. Without one, they require operator level 2.
+The permission nodes `meowlogger:lookup`, `meowlogger:inspect`, `meowlogger:rollback`,
+`meowlogger:teleport`, `meowlogger:reload` and `meowlogger:purge` can be granted by a permission mod.
+Without one, reload requires operator level 3, purge level 4, and the others level 2.
+
+## Configuration
+
+`config/meowlogger.json` is created with the defaults on first start. Edit it and run `/ml reload`
+(or restart). It lets you skip actions, worlds, causes, blocks, items and mobs you don't want
+logged, delete old actions automatically, and tune rollback and lookup limits.
+
+Every option is explained in comments inside the file itself.
 
 ## Development
 

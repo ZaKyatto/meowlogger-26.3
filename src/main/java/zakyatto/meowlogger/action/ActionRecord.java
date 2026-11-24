@@ -19,13 +19,15 @@ import net.minecraft.world.level.block.state.BlockState;
  * @param playerId   UUID of the responsible player (the actor, or e.g. whoever lit the TNT), or null if none
  * @param playerName name of the responsible player at the time of the action, or null if none
  * @param world      dimension the action happened in
- * @param pos        affected block position
- * @param oldState   block state before the action; for item actions, the container's state
- * @param oldData    block entity data before the action (e.g. chest contents), or null if none
- * @param newState   block state after the action; for item actions, the container's state
+ * @param pos        affected block position; for entity actions, the block the entity was in
+ * @param oldState   block state before the action; for item actions, the container's state; null for entity actions
+ * @param oldData    block entity data before the action (e.g. chest contents), or null if none; for
+ *                   entity actions, the entity's saved data
+ * @param newState   block state after the action; for item actions, the container's state; null for entity actions
  * @param newData    block entity data after the action, or null if none; for item actions, the
  *                   moved items as written by {@link ItemData#encode}
- * @param item       for item actions, the moved item's identifier, e.g. {@code minecraft:diamond}; otherwise null
+ * @param object     for item actions, the moved item's identifier, e.g. {@code minecraft:diamond}; for
+ *                   entity actions, the entity type, e.g. {@code minecraft:cow}; null for block changes
  */
 public record ActionRecord(
 		long timeMillis,
@@ -39,7 +41,7 @@ public record ActionRecord(
 		CompoundTag oldData,
 		BlockState newState,
 		CompoundTag newData,
-		String item
+		String object
 ) {
 	/** Source of actions a player performed directly. */
 	public static final String PLAYER_SOURCE = "minecraft:player";
@@ -48,8 +50,12 @@ public record ActionRecord(
 		if ((playerId == null) != (playerName == null)) {
 			throw new IllegalArgumentException("playerId and playerName must both be set or both be null");
 		}
-		if (type.isBlockChange() == (item != null)) {
-			throw new IllegalArgumentException("item must be set exactly for item actions");
+		boolean entity = type.kind() == ActionType.Kind.ENTITY;
+		if ((type.kind() == ActionType.Kind.BLOCK) == (object != null)) {
+			throw new IllegalArgumentException("object must be set exactly for item and entity actions");
+		}
+		if (entity != (oldState == null) || entity != (newState == null)) {
+			throw new IllegalArgumentException("block states must be set exactly for block and item actions");
 		}
 		pos = pos.immutable();
 	}

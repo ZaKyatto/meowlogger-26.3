@@ -1,43 +1,15 @@
-# gradle
+# Ignore everything, then allow only what the mod needs on GitHub.
+/*
 
-.gradle/
-build/
-out/
-classes/
-
-# eclipse
-
-*.launch
-
-# idea
-
-.idea/
-*.iml
-*.ipr
-*.iws
-
-# vscode
-
-.settings/
-.vscode/
-bin/
-.classpath
-.project
-
-# macos
-
-*.DS_Store
-
-# fabric
-
-run/
-
-# java
-
-hs_err_*.log
-replay_*.log
-*.hprof
-*.jfr
-CLAUDE.md
-# Written by Minecraft bootstrap during unit tests
-logs/
+!/.github/
+!/gradle/
+!/src/
+!/.gitattributes
+!/.gitignore
+!/build.gradle
+!/gradle.properties
+!/gradlew
+!/gradlew.bat
+!/settings.gradle
+!/LICENSE
+!/README.md

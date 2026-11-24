@@ -21,7 +21,7 @@ import zakyatto.meowlogger.query.ActionFilter;
 
 class FilterParserTest {
 	private static final BlockPos POS = new BlockPos(10, 64, 10);
-	private static final long NOW = 100_000_000L;
+	private static final long NOW = 10_000_000_000L;
 
 	@BeforeAll
 	static void bootstrap() {
@@ -40,6 +40,14 @@ class FilterParserTest {
 		assertEquals(Set.of(ActionType.BLOCK_BREAK, ActionType.BLOCK_PLACE), filter.types());
 		assertEquals(Set.of("minecraft:stone", "minecraft:oak_stairs"), filter.objects());
 		assertEquals(NOW - 5_400_000L, filter.sinceMillis());
+		assertEquals(0, filter.beforeMillis());
+	}
+
+	@Test
+	void beforeLimitsToOlderActions() throws CommandSyntaxException {
+		ActionFilter filter = parse("before:30d t:60d");
+		assertEquals(NOW - 2_592_000_000L, filter.beforeMillis());
+		assertEquals(NOW - 5_184_000_000L, filter.sinceMillis());
 	}
 
 	@Test
@@ -50,6 +58,11 @@ class FilterParserTest {
 		assertEquals(POS, filter.max());
 		assertEquals(Set.of("a", "b"), filter.players());
 		assertEquals(NOW - 10_000L, filter.sinceMillis());
+	}
+
+	@Test
+	void entitiesAreObjectsToo() throws CommandSyntaxException {
+		assertEquals(Set.of("minecraft:cow", "minecraft:wolf", "minecraft:diamond"), parse("e:cow,Minecraft:Wolf item:diamond").objects());
 	}
 
 	@Test
@@ -71,13 +84,13 @@ class FilterParserTest {
 	void rejectsInvalidInput() {
 		for (String input : new String[] {
 				"foo:bar", "radius", "radius:", ":5", "radius:-1", "radius:abc", "radius:1001",
-				"time:5", "time:1x", "time:h", "time:1h-", "action:explode", "block:not_a_block", "block:Bad Block", "world:!!", "source:!!"
+				"time:5", "time:1x", "before:", "before:x", "time:h", "time:1h-", "action:explode", "block:not_a_block", "block:Bad Block", "entity:stone", "world:!!", "source:!!"
 		}) {
 			assertThrows(CommandSyntaxException.class, () -> parse(input), input);
 		}
 	}
 
 	private static ActionFilter parse(String input) throws CommandSyntaxException {
-		return FilterParser.parse(input, Level.OVERWORLD, POS, NOW);
+		return FilterParser.parse(input, Level.OVERWORLD, POS, NOW, 1_000);
 	}
 }

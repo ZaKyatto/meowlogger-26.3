@@ -13,6 +13,7 @@ import net.minecraft.core.Direction;
 import net.minecraft.core.HolderLookup;
 import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.nbt.CompoundTag;
+import net.minecraft.world.entity.EntityTypes;
 import net.minecraft.world.item.ItemStackTemplate;
 import net.minecraft.world.item.Items;
 import net.minecraft.world.level.Level;
@@ -53,18 +54,18 @@ class RollbackTest {
 		LoggedAction badWorld = action(10, "Not A World", "minecraft:stone", null, null, "minecraft:air", null, null);
 		LoggedAction corruptData = action(13, "minecraft:overworld", "minecraft:chest", null, new byte[] {1, 2, 3}, "minecraft:air", null, null);
 
-		BlockChange.Parsed parsed = BlockChange.parseAll(
+		ParsedAction.Parsed parsed = ParsedAction.parseAll(
 				List.of(place, brokenChest, conflicting, removedMod, renamedProperty, badWorld, corruptData), LongSet.of(11), REGISTRIES);
 
 		assertEquals(1, parsed.conflicts());
 		assertEquals(4, parsed.invalid());
 		BlockPos pos = new BlockPos(1, 2, 3);
 		assertEquals(List.of(
-				new BlockChange(7, ActionType.BLOCK_PLACE, Level.OVERWORLD, pos, Blocks.AIR.defaultBlockState(), null, stairs, null, null),
-				new BlockChange(12, ActionType.BLOCK_PLACE, Level.OVERWORLD, pos, Blocks.CHEST.defaultBlockState(), chest,
-						Blocks.AIR.defaultBlockState(), null, null)),
+				new ParsedAction(7, ActionType.BLOCK_PLACE, Level.OVERWORLD, pos, Blocks.AIR.defaultBlockState(), null, stairs, null, null, null),
+				new ParsedAction(12, ActionType.BLOCK_PLACE, Level.OVERWORLD, pos, Blocks.CHEST.defaultBlockState(), chest,
+						Blocks.AIR.defaultBlockState(), null, null, null)),
 				parsed.changes());
-		assertNull(BlockChange.parseState("minecraft:stone", "[nope=1]", new HashMap<>()));
+		assertNull(ParsedAction.parseState("minecraft:stone", "[nope=1]", new HashMap<>()));
 	}
 
 	@Test
@@ -76,13 +77,33 @@ class RollbackTest {
 		LoggedAction unknownItem = new LoggedAction(6, 0, ActionType.ITEM_INSERT, ActionRecord.PLAYER_SOURCE, "Meow", "minecraft:overworld", 1, 2, 3,
 				"minecraft:chest", null, null, "gone:gizmo", null, SqliteDatabaseAccess.compress(brokenItemData()), false);
 
-		BlockChange.Parsed parsed = BlockChange.parseAll(List.of(theft, unknownItem), LongSet.of(), REGISTRIES);
+		ParsedAction.Parsed parsed = ParsedAction.parseAll(List.of(theft, unknownItem), LongSet.of(), REGISTRIES);
 
 		assertEquals(1, parsed.invalid());
-		BlockChange change = parsed.changes().getFirst();
+		ParsedAction change = parsed.changes().getFirst();
 		assertEquals(ActionType.ITEM_REMOVE, change.type());
 		assertEquals(diamonds, change.items());
 		assertEquals(Blocks.CHEST, change.oldState().getBlock(), "the old object of an item action is its container");
+	}
+
+	@Test
+	void parsesEntityKills() {
+		CompoundTag cow = new CompoundTag();
+		cow.putString("id", "minecraft:cow");
+		LoggedAction kill = entityKill(20, "minecraft:cow", SqliteDatabaseAccess.compress(cow));
+		LoggedAction removedMod = entityKill(21, "gone:beast", SqliteDatabaseAccess.compress(cow));
+		LoggedAction noData = entityKill(22, "minecraft:cow", null);
+
+		ParsedAction.Parsed parsed = ParsedAction.parseAll(List.of(kill, removedMod, noData), LongSet.of(), REGISTRIES);
+
+		assertEquals(2, parsed.invalid());
+		assertEquals(List.of(new ParsedAction(20, ActionType.ENTITY_KILL, Level.OVERWORLD, new BlockPos(1, 2, 3), null, cow, null, null, null,
+				EntityTypes.COW)), parsed.changes());
+	}
+
+	private static LoggedAction entityKill(long id, String type, byte[] data) {
+		return new LoggedAction(id, 0, ActionType.ENTITY_KILL, ActionRecord.PLAYER_SOURCE, "Meow", "minecraft:overworld", 1, 2, 3,
+				type, null, data, type, null, null, false);
 	}
 
 	private static CompoundTag brokenItemData() {

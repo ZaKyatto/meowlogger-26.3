@@ -20,9 +20,6 @@ import zakyatto.meowlogger.storage.Database;
  * Does not own the {@link Database}; close this service before closing the database.
  */
 public final class LookupService implements AutoCloseable {
-	/** Number of actions shown per page. */
-	public static final int PAGE_SIZE = 8;
-
 	private final Database database;
 	private final ExecutorService executor =
 			Executors.newSingleThreadExecutor(Thread.ofPlatform().name("MeowLogger Lookup").daemon().factory());
@@ -43,19 +40,30 @@ public final class LookupService implements AutoCloseable {
 	}
 
 	/**
-	 * Looks up one page of actions matching {@code filter}. The future completes on the lookup
+	 * Looks up one page of {@code pageSize} actions matching {@code filter}. The future completes on the lookup
 	 * thread, exceptionally with a {@link CompletionException} wrapping the {@link SQLException} on
 	 * database errors.
 	 */
-	public CompletableFuture<Page> lookup(ActionFilter filter, int page) {
+	public CompletableFuture<Page> lookup(ActionFilter filter, int page, int pageSize) {
 		return CompletableFuture.supplyAsync(() -> {
 			try {
 				int total = database.count(filter);
-				int pageCount = Math.max(1, Math.ceilDiv(total, PAGE_SIZE));
+				int pageCount = Math.max(1, Math.ceilDiv(total, pageSize));
 				List<LoggedAction> actions = page > pageCount
 						? List.of()
-						: database.lookup(filter, (page - 1) * PAGE_SIZE, PAGE_SIZE);
+						: database.lookup(filter, (page - 1) * pageSize, pageSize);
 				return new Page(filter, page, pageCount, total, actions);
+			} catch (SQLException e) {
+				throw new CompletionException(e);
+			}
+		}, executor);
+	}
+
+	/** Counts the actions matching {@code filter}. Completes like {@link #lookup}. */
+	public CompletableFuture<Integer> count(ActionFilter filter) {
+		return CompletableFuture.supplyAsync(() -> {
+			try {
+				return database.count(filter);
 			} catch (SQLException e) {
 				throw new CompletionException(e);
 			}

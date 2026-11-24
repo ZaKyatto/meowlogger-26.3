@@ -7,31 +7,39 @@ import java.util.Optional;
  * must never change or be reused.
  */
 public enum ActionType {
-	BLOCK_BREAK(1, "block-break", true),
-	BLOCK_PLACE(2, "block-place", true),
+	BLOCK_BREAK(1, "block-break", Kind.BLOCK),
+	BLOCK_PLACE(2, "block-place", Kind.BLOCK),
 	/** A player put items into a container. */
-	ITEM_INSERT(3, "item-insert", false),
+	ITEM_INSERT(3, "item-insert", Kind.ITEM),
 	/** A player took items out of a container. */
-	ITEM_REMOVE(4, "item-remove", false);
+	ITEM_REMOVE(4, "item-remove", Kind.ITEM),
+	/** A living entity (not a player) died. */
+	ENTITY_KILL(5, "entity-kill", Kind.ENTITY);
+
+	/** What an action changes, which decides how it is stored and rolled back. */
+	public enum Kind {
+		/** Replaces one block state with another. */
+		BLOCK,
+		/** Moves items into or out of a container; the container's block is unchanged. */
+		ITEM,
+		/** Removes an entity from the world. */
+		ENTITY
+	}
 
 	private static final ActionType[] VALUES = values();
 
 	private final int id;
 	private final String key;
-	private final boolean blockChange;
+	private final Kind kind;
 
-	ActionType(int id, String key, boolean blockChange) {
+	ActionType(int id, String key, Kind kind) {
 		this.id = id;
 		this.key = key;
-		this.blockChange = blockChange;
+		this.kind = kind;
 	}
 
-	/**
-	 * Whether this action replaces one block state with another. Otherwise it changes a container's
-	 * contents, and the old and new states are both the container's.
-	 */
-	public boolean isBlockChange() {
-		return blockChange;
+	public Kind kind() {
+		return kind;
 	}
 
 	/** Stable database id of this action type. */
