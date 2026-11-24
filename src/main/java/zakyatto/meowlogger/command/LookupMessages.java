@@ -1,16 +1,24 @@
 package zakyatto.meowlogger.command;
 
+import java.io.IOException;
 import java.time.Instant;
 import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
+import java.util.Optional;
 
 import net.minecraft.ChatFormatting;
+import net.minecraft.core.HolderLookup;
+import net.minecraft.nbt.CompoundTag;
 import net.minecraft.network.chat.ClickEvent;
 import net.minecraft.network.chat.Component;
 import net.minecraft.network.chat.HoverEvent;
 import net.minecraft.network.chat.MutableComponent;
 
+import zakyatto.meowlogger.action.ActionRecord;
+import zakyatto.meowlogger.action.ActionType;
+import zakyatto.meowlogger.action.ItemData;
 import zakyatto.meowlogger.query.LoggedAction;
+import zakyatto.meowlogger.storage.NbtBlobs;
 
 /** Builds the chat components for lookup results. */
 final class LookupMessages {
@@ -37,26 +45,25 @@ final class LookupMessages {
 				.append(Component.literal(": no actions found").withStyle(ChatFormatting.GRAY));
 	}
 
-	static Component entry(LoggedAction action, long nowMillis) {
+	static Component entry(LoggedAction action, long nowMillis, HolderLookup.Provider registries) {
 		MutableComponent verb = switch (action.type()) {
 			case BLOCK_BREAK -> Component.literal("broke").withStyle(ChatFormatting.RED);
 			case BLOCK_PLACE -> Component.literal("placed").withStyle(ChatFormatting.GREEN);
+			case ITEM_INSERT -> Component.literal("added").withStyle(ChatFormatting.GREEN);
+			case ITEM_REMOVE -> Component.literal("took").withStyle(ChatFormatting.RED);
 		};
-		String object = switch (action.type()) {
-			case BLOCK_BREAK -> action.oldObject();
-			case BLOCK_PLACE -> action.newObject();
+		Component what = switch (action.type()) {
+			case BLOCK_BREAK -> block(action.oldObject(), action);
+			case BLOCK_PLACE -> block(action.newObject(), action);
+			case ITEM_INSERT, ITEM_REMOVE -> Component.empty()
+					.append(items(action, registries))
+					.append(Component.literal(action.type() == ActionType.ITEM_INSERT ? " to " : " from ").withStyle(ChatFormatting.GRAY))
+					.append(Component.literal(shortName(action.oldObject())).withStyle(ChatFormatting.YELLOW));
 		};
 
 		Component when = Component.literal(ago(nowMillis - action.timeMillis())).withStyle(style -> style
 				.withColor(ChatFormatting.GRAY)
 				.withHoverEvent(new HoverEvent.ShowText(Component.literal(TIMESTAMP.format(Instant.ofEpochMilli(action.timeMillis()))))));
-		Component block = Component.literal(shortName(object)).withStyle(style -> style
-				.withColor(ChatFormatting.YELLOW)
-				.withHoverEvent(new HoverEvent.ShowText(Component.empty()
-						.append(Component.literal("Before: ").withStyle(ChatFormatting.GRAY))
-						.append(withState(action.oldObject(), action.oldState()))
-						.append(Component.literal("\nAfter: ").withStyle(ChatFormatting.GRAY))
-						.append(withState(action.newObject(), action.newState())))));
 		String teleport = "/ml teleport " + action.world() + " " + action.x() + " " + action.y() + " " + action.z();
 		Component position = Component.literal(action.x() + " " + action.y() + " " + action.z()).withStyle(style -> style
 				.withColor(ChatFormatting.GRAY)
@@ -65,9 +72,9 @@ final class LookupMessages {
 				.withHoverEvent(new HoverEvent.ShowText(Component.literal("Teleport here (" + shortName(action.world()) + ")"))));
 
 		MutableComponent description = Component.empty()
-				.append(Component.literal(action.playerName()).withStyle(ChatFormatting.AQUA)).append(" ")
+				.append(actor(action)).append(" ")
 				.append(verb).append(" ")
-				.append(block);
+				.append(what);
 		MutableComponent line = Component.empty().append(when).append(" ");
 		if (action.rolledBack()) {
 			line.append(description.withStyle(style -> style.withStrikethrough(true)))
@@ -76,6 +83,46 @@ final class LookupMessages {
 			line.append(description);
 		}
 		return line.append(Component.literal(" at ").withStyle(ChatFormatting.GRAY)).append(position);
+	}
+
+	private static Component block(String object, LoggedAction action) {
+		return Component.literal(shortName(object)).withStyle(style -> style
+				.withColor(ChatFormatting.YELLOW)
+				.withHoverEvent(new HoverEvent.ShowText(Component.empty()
+						.append(Component.literal("Before: ").withStyle(ChatFormatting.GRAY))
+						.append(withState(action.oldObject(), action.oldState()))
+						.append(Component.literal("\nAfter: ").withStyle(ChatFormatting.GRAY))
+						.append(withState(action.newObject(), action.newState())))));
+	}
+
+	/** "12 × diamond", hovering to show the item's tooltip (enchantments, name) when its data still decodes. */
+	private static Component items(LoggedAction action, HolderLookup.Provider registries) {
+		Optional<ItemData> data;
+		try {
+			CompoundTag tag = NbtBlobs.decompress(action.newData());
+			data = tag == null ? Optional.empty() : ItemData.decode(tag, registries);
+		} catch (IOException e) {
+			data = Optional.empty();
+		}
+		String count = data.map(items -> items.count() + " × ").orElse("? × ");
+		HoverEvent hover = data.<HoverEvent>map(items -> new HoverEvent.ShowItem(items.item()))
+				.orElseGet(() -> new HoverEvent.ShowText(Component.literal(action.newObject())));
+		return Component.literal(count + shortName(action.newObject())).withStyle(style -> style
+				.withColor(ChatFormatting.YELLOW)
+				.withHoverEvent(hover));
+	}
+
+	/** "Steve" for a direct player action, "Steve (tnt)" for one a player caused indirectly, "creeper" for no player. */
+	static Component actor(LoggedAction action) {
+		boolean direct = ActionRecord.PLAYER_SOURCE.equals(action.source());
+		if (action.playerName() == null) {
+			return Component.literal(shortName(action.source())).withStyle(ChatFormatting.LIGHT_PURPLE);
+		}
+		MutableComponent actor = Component.literal(action.playerName()).withStyle(ChatFormatting.AQUA);
+		if (!direct) {
+			actor.append(Component.literal(" (" + shortName(action.source()) + ")").withStyle(ChatFormatting.LIGHT_PURPLE));
+		}
+		return actor;
 	}
 
 	static Component footer(int page, int pageCount) {

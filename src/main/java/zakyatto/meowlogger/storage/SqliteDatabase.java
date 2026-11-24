@@ -6,12 +6,15 @@ import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Statement;
+import java.sql.Types;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
+import java.util.stream.Collectors;
 
 import net.minecraft.commands.arguments.blocks.BlockStateParser;
 import net.minecraft.core.registries.BuiltInRegistries;
@@ -65,13 +68,51 @@ public final class SqliteDatabase implements Database {
 			"CREATE INDEX actions_time ON actions (time)"
 	}, {
 			"ALTER TABLE actions ADD COLUMN rolled_back INTEGER NOT NULL DEFAULT 0"
+	}, {
+			// v4: non-player sources (explosions, fire), so player_id becomes optional, and block entity data.
+			// SQLite cannot relax a NOT NULL constraint in place, so the table is rebuilt.
+			"CREATE TABLE sources (id INTEGER PRIMARY KEY, name TEXT NOT NULL UNIQUE)",
+			"INSERT INTO sources (id, name) VALUES (1, '" + ActionRecord.PLAYER_SOURCE + "')",
+			"""
+			CREATE TABLE actions_v4 (
+				id            INTEGER PRIMARY KEY,
+				time          INTEGER NOT NULL,
+				type          INTEGER NOT NULL,
+				source_id     INTEGER NOT NULL REFERENCES sources (id),
+				player_id     INTEGER REFERENCES players (id),
+				world_id      INTEGER NOT NULL REFERENCES worlds (id),
+				x             INTEGER NOT NULL,
+				y             INTEGER NOT NULL,
+				z             INTEGER NOT NULL,
+				old_object_id INTEGER NOT NULL REFERENCES objects (id),
+				old_state     TEXT,
+				old_data      BLOB,
+				new_object_id INTEGER NOT NULL REFERENCES objects (id),
+				new_state     TEXT,
+				new_data      BLOB,
+				rolled_back   INTEGER NOT NULL DEFAULT 0
+			)""",
+			"""
+			INSERT INTO actions_v4 (id, time, type, source_id, player_id, world_id, x, y, z,
+			                        old_object_id, old_state, new_object_id, new_state, rolled_back)
+			SELECT id, time, type, 1, player_id, world_id, x, y, z, old_object_id, old_state, new_object_id, new_state, rolled_back
+			FROM actions""",
+			"DROP TABLE actions",
+			"ALTER TABLE actions_v4 RENAME TO actions",
+			"CREATE INDEX actions_position ON actions (world_id, x, z, y)",
+			"CREATE INDEX actions_player ON actions (player_id, time)",
+			"CREATE INDEX actions_time ON actions (time)"
 	}};
 	private static final int SCHEMA_VERSION = MIGRATIONS.length;
+	private static final String BLOCK_CHANGE_TYPES = Arrays.stream(ActionType.values())
+			.filter(ActionType::isBlockChange).map(type -> String.valueOf(type.id())).collect(Collectors.joining(", "));
 
 	private static final String LOOKUP_COLUMNS = """
-			SELECT a.id, a.time, a.type, p.name, w.name, a.x, a.y, a.z, o.name, a.old_state, n.name, a.new_state, a.rolled_back
+			SELECT a.id, a.time, a.type, s.name, p.name, w.name, a.x, a.y, a.z,
+			       o.name, a.old_state, a.old_data, n.name, a.new_state, a.new_data, a.rolled_back
 			FROM actions a
-			JOIN players p ON p.id = a.player_id
+			JOIN sources s ON s.id = a.source_id
+			LEFT JOIN players p ON p.id = a.player_id
 			JOIN worlds w ON w.id = a.world_id
 			JOIN objects o ON o.id = a.old_object_id
 			JOIN objects n ON n.id = a.new_object_id""";
@@ -82,10 +123,13 @@ public final class SqliteDatabase implements Database {
 	private final PreparedStatement upsertPlayer;
 	private final PreparedStatement upsertWorld;
 	private final PreparedStatement upsertObject;
+	private final PreparedStatement upsertSource;
 
 	private final Map<UUID, Integer> playerIds = new HashMap<>();
 	private final Map<ResourceKey<Level>, Integer> worldIds = new HashMap<>();
 	private final Map<Block, Integer> objectIds = new HashMap<>();
+	private final Map<String, Integer> objectNameIds = new HashMap<>();
+	private final Map<String, Integer> sourceIds = new HashMap<>();
 
 	/**
 	 * Opens (creating if needed) the database file and brings its schema up to date.
@@ -102,15 +146,17 @@ public final class SqliteDatabase implements Database {
 			connection.setAutoCommit(false);
 			migrate();
 			insertAction = connection.prepareStatement("""
-					INSERT INTO actions (time, type, player_id, world_id, x, y, z,
-					                     old_object_id, old_state, new_object_id, new_state)
-					VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""");
+					INSERT INTO actions (time, type, source_id, player_id, world_id, x, y, z,
+					                     old_object_id, old_state, old_data, new_object_id, new_state, new_data)
+					VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""");
 			upsertPlayer = connection.prepareStatement(
 					"INSERT INTO players (uuid, name) VALUES (?, ?) ON CONFLICT (uuid) DO UPDATE SET name = excluded.name RETURNING id");
 			upsertWorld = connection.prepareStatement(
 					"INSERT INTO worlds (name) VALUES (?) ON CONFLICT (name) DO UPDATE SET name = excluded.name RETURNING id");
 			upsertObject = connection.prepareStatement(
 					"INSERT INTO objects (name) VALUES (?) ON CONFLICT (name) DO UPDATE SET name = excluded.name RETURNING id");
+			upsertSource = connection.prepareStatement(
+					"INSERT INTO sources (name) VALUES (?) ON CONFLICT (name) DO UPDATE SET name = excluded.name RETURNING id");
 			// Opened last, so the catch below only ever has the write connection to clean up.
 			SQLiteConfig readConfig = new SQLiteConfig();
 			readConfig.setReadOnly(true);
@@ -156,15 +202,22 @@ public final class SqliteDatabase implements Database {
 			for (ActionRecord record : records) {
 				insertAction.setLong(1, record.timeMillis());
 				insertAction.setInt(2, record.type().id());
-				insertAction.setInt(3, playerId(record));
-				insertAction.setInt(4, worldId(record.world()));
-				insertAction.setInt(5, record.pos().getX());
-				insertAction.setInt(6, record.pos().getY());
-				insertAction.setInt(7, record.pos().getZ());
-				insertAction.setInt(8, objectId(record.oldState().getBlock()));
-				insertAction.setString(9, properties(record.oldState()));
-				insertAction.setInt(10, objectId(record.newState().getBlock()));
-				insertAction.setString(11, properties(record.newState()));
+				insertAction.setInt(3, sourceId(record.source()));
+				if (record.playerId() == null) {
+					insertAction.setNull(4, Types.INTEGER);
+				} else {
+					insertAction.setInt(4, playerId(record));
+				}
+				insertAction.setInt(5, worldId(record.world()));
+				insertAction.setInt(6, record.pos().getX());
+				insertAction.setInt(7, record.pos().getY());
+				insertAction.setInt(8, record.pos().getZ());
+				insertAction.setInt(9, objectId(record.oldState().getBlock()));
+				insertAction.setString(10, properties(record.oldState()));
+				insertAction.setBytes(11, NbtBlobs.compress(record.oldData()));
+				insertAction.setInt(12, record.item() != null ? objectId(record.item()) : objectId(record.newState().getBlock()));
+				insertAction.setString(13, properties(record.newState()));
+				insertAction.setBytes(14, NbtBlobs.compress(record.newData()));
 				insertAction.addBatch();
 			}
 			insertAction.executeBatch();
@@ -174,6 +227,8 @@ public final class SqliteDatabase implements Database {
 			playerIds.clear();
 			worldIds.clear();
 			objectIds.clear();
+			objectNameIds.clear();
+			sourceIds.clear();
 			try {
 				insertAction.clearBatch();
 				connection.rollback();
@@ -228,9 +283,28 @@ public final class SqliteDatabase implements Database {
 	private int objectId(Block block) throws SQLException {
 		Integer id = objectIds.get(block);
 		if (id == null) {
-			upsertObject.setString(1, BuiltInRegistries.BLOCK.getKey(block).toString());
-			id = queryId(upsertObject);
+			id = objectId(BuiltInRegistries.BLOCK.getKey(block).toString());
 			objectIds.put(block, id);
+		}
+		return id;
+	}
+
+	private int objectId(String name) throws SQLException {
+		Integer id = objectNameIds.get(name);
+		if (id == null) {
+			upsertObject.setString(1, name);
+			id = queryId(upsertObject);
+			objectNameIds.put(name, id);
+		}
+		return id;
+	}
+
+	private int sourceId(String source) throws SQLException {
+		Integer id = sourceIds.get(source);
+		if (id == null) {
+			upsertSource.setString(1, source);
+			id = queryId(upsertSource);
+			sourceIds.put(source, id);
 		}
 		return id;
 	}
@@ -275,9 +349,11 @@ public final class SqliteDatabase implements Database {
 			try (ResultSet result = statement.executeQuery()) {
 				while (result.next()) {
 					actions.add(new LoggedAction(result.getLong(1), result.getLong(2), ActionType.fromId(result.getInt(3)),
-							result.getString(4), result.getString(5), result.getInt(6), result.getInt(7), result.getInt(8),
-							result.getString(9), result.getString(10), result.getString(11), result.getString(12),
-							result.getBoolean(13)));
+							result.getString(4), result.getString(5), result.getString(6),
+							result.getInt(7), result.getInt(8), result.getInt(9),
+							result.getString(10), result.getString(11), result.getBytes(12),
+							result.getString(13), result.getString(14), result.getBytes(15),
+							result.getBoolean(16)));
 				}
 			}
 			return actions;
@@ -291,10 +367,13 @@ public final class SqliteDatabase implements Database {
 		if (outer.condition() == null) {
 			return new long[0]; // every action matches, so no action outside the filter can conflict
 		}
-		String sql = "SELECT a.id FROM actions a WHERE " + outer.condition()
+		// Only block changes conflict: container contents are interchangeable, so someone else using the
+		// same chest later must not stop a theft from being rolled back.
+		String sql = "SELECT a.id FROM actions a WHERE " + outer.condition() + " AND a.type IN (" + BLOCK_CHANGE_TYPES + ")"
 				+ " AND EXISTS (SELECT 1 FROM actions b"
 				+ " WHERE b.world_id = a.world_id AND b.x = a.x AND b.z = a.z AND b.y = a.y"
-				+ " AND b.id > a.id AND b.rolled_back = 0 AND NOT (" + inner.condition() + "))";
+				+ " AND b.id > a.id AND b.rolled_back = 0 AND b.type IN (" + BLOCK_CHANGE_TYPES + ")"
+				+ " AND NOT (" + inner.condition() + "))";
 		try (PreparedStatement statement = readConnection.prepareStatement(sql)) {
 			inner.bind(statement, outer.bind(statement, 1));
 			LongArrayList ids = new LongArrayList();
@@ -333,6 +412,10 @@ public final class SqliteDatabase implements Database {
 			if (!filter.players().isEmpty()) {
 				clauses.add(t + "player_id IN (SELECT id FROM players WHERE name COLLATE NOCASE IN (" + placeholders(filter.players().size()) + "))");
 				params.addAll(filter.players());
+			}
+			if (!filter.sources().isEmpty()) {
+				clauses.add(t + "source_id IN (SELECT id FROM sources WHERE name IN (" + placeholders(filter.sources().size()) + "))");
+				params.addAll(filter.sources());
 			}
 			if (!filter.types().isEmpty()) {
 				clauses.add(t + "type IN (" + placeholders(filter.types().size()) + ")");

@@ -14,7 +14,6 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import zakyatto.meowlogger.action.ActionRecord;
-import zakyatto.meowlogger.capture.BlockCapture;
 import zakyatto.meowlogger.command.Inspector;
 import zakyatto.meowlogger.command.Lookups;
 import zakyatto.meowlogger.command.MeowCommands;
@@ -34,7 +33,6 @@ public class MeowLogger implements ModInitializer {
 	public void onInitialize() {
 		ServerLifecycleEvents.SERVER_STARTING.register(MeowLogger::start);
 		ServerLifecycleEvents.SERVER_STOPPED.register(server -> stop());
-		BlockCapture.register();
 		MeowCommands.register();
 		Lookups.register();
 		Inspector.register();

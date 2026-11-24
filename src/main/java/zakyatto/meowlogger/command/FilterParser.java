@@ -17,6 +17,7 @@ import com.mojang.brigadier.suggestion.SuggestionsBuilder;
 
 import net.minecraft.commands.SharedSuggestionProvider;
 import net.minecraft.core.BlockPos;
+import net.minecraft.core.Registry;
 import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.core.registries.Registries;
 import net.minecraft.network.chat.Component;
@@ -28,20 +29,23 @@ import zakyatto.meowlogger.action.ActionType;
 import zakyatto.meowlogger.query.ActionFilter;
 
 /**
- * Parses lookup parameters such as {@code radius:10 player:Steve,Alex action:block-break time:2h30m}
+ * Parses lookup parameters such as {@code radius:10 player:Steve,Alex source:tnt action:block-break time:2h30m}
  * into an {@link ActionFilter}, and suggests completions for them.
  */
 public final class FilterParser {
-	private static final List<String> KEYS = List.of("radius:", "player:", "action:", "block:", "time:", "world:");
+	private static final List<String> KEYS = List.of("radius:", "player:", "source:", "action:", "block:", "item:", "time:", "world:");
 	private static final Pattern DURATION_PART = Pattern.compile("(\\d{1,9})([smhdw])");
 	private static final int MAX_RADIUS = 1_000;
 
-	private static final DynamicCommandExceptionType UNKNOWN_KEY = error(key -> "Unknown parameter '" + key + "'. Use one of: radius, player, action, block, time, world");
+	private static final DynamicCommandExceptionType UNKNOWN_KEY = error(key -> "Unknown parameter '" + key + "'. Use one of: radius, player, source, action, block, item, time, world");
 	private static final DynamicCommandExceptionType MALFORMED = error(token -> "Expected key:value, got '" + token + "'");
 	private static final DynamicCommandExceptionType BAD_RADIUS = error(value -> "Radius must be a whole number from 0 to " + MAX_RADIUS + ", got '" + value + "'");
 	private static final DynamicCommandExceptionType BAD_TIME = error(value -> "Invalid time '" + value + "'. Use e.g. 30m, 2h, 1d12h (units: s, m, h, d, w)");
 	private static final DynamicCommandExceptionType UNKNOWN_ACTION = error(value -> "Unknown action '" + value + "'");
 	private static final DynamicCommandExceptionType UNKNOWN_BLOCK = error(value -> "Unknown block '" + value + "'");
+	private static final DynamicCommandExceptionType UNKNOWN_ITEM = error(value -> "Unknown item '" + value + "'");
+	private static final DynamicCommandExceptionType BAD_SOURCE = error(value -> "Invalid source '" + value + "'");
+	private static final List<String> COMMON_SOURCES = List.of("player", "tnt", "creeper", "fire", "end_crystal", "tnt_minecart", "fireball", "wither", "bad_respawn_point");
 	private static final DynamicCommandExceptionType BAD_WORLD = error(value -> "Invalid world '" + value + "'");
 
 	private FilterParser() {
@@ -61,6 +65,7 @@ public final class FilterParser {
 		long sinceMillis = 0;
 		Set<String> players = new HashSet<>();
 		Set<ActionType> types = new HashSet<>();
+		Set<String> sources = new HashSet<>();
 		Set<String> objects = new HashSet<>();
 
 		for (String token : input.trim().split("\\s+")) {
@@ -78,15 +83,17 @@ public final class FilterParser {
 						types.add(ActionType.fromKey(name.toLowerCase(Locale.ROOT)).orElseThrow(() -> UNKNOWN_ACTION.create(name)));
 					}
 				}
-				case "block", "b" -> {
+				case "source", "s" -> {
 					for (String name : value.split(",")) {
 						Identifier id = Identifier.tryParse(name.toLowerCase(Locale.ROOT));
-						if (id == null || !BuiltInRegistries.BLOCK.containsKey(id)) {
-							throw UNKNOWN_BLOCK.create(name);
+						if (id == null) {
+							throw BAD_SOURCE.create(name);
 						}
-						objects.add(id.toString());
+						sources.add(id.toString());
 					}
 				}
+				case "block", "b" -> addRegistered(value, BuiltInRegistries.BLOCK, UNKNOWN_BLOCK, objects);
+				case "item", "i" -> addRegistered(value, BuiltInRegistries.ITEM, UNKNOWN_ITEM, objects);
 				case "time", "t" -> sinceMillis = nowMillis - parseDuration(value);
 				case "world", "w" -> {
 					Identifier id = Identifier.tryParse(value.toLowerCase(Locale.ROOT));
@@ -109,7 +116,19 @@ public final class FilterParser {
 			min = sourcePos.offset(-radius, -radius, -radius);
 			max = sourcePos.offset(radius, radius, radius);
 		}
-		return new ActionFilter(world, min, max, players, types, objects, Math.max(sinceMillis, 0), null);
+		return new ActionFilter(world, min, max, players, sources, types, objects, Math.max(sinceMillis, 0), null);
+	}
+
+	/** Adds each comma-separated identifier in {@code value} to {@code into}, requiring it to exist in {@code registry}. */
+	private static void addRegistered(String value, Registry<?> registry, DynamicCommandExceptionType unknown, Set<String> into)
+			throws CommandSyntaxException {
+		for (String name : value.split(",")) {
+			Identifier id = Identifier.tryParse(name.toLowerCase(Locale.ROOT));
+			if (id == null || !registry.containsKey(id)) {
+				throw unknown.create(name);
+			}
+			into.add(id.toString());
+		}
 	}
 
 	private static int parseRadius(String value) throws CommandSyntaxException {
@@ -167,9 +186,11 @@ public final class FilterParser {
 			case "player", "p" -> SharedSuggestionProvider.suggest(source.getOnlinePlayerNames(), value);
 			case "action", "a" -> SharedSuggestionProvider.suggest(Arrays.stream(ActionType.values()).map(ActionType::key), value);
 			case "block", "b" -> SharedSuggestionProvider.suggestResource(BuiltInRegistries.BLOCK.keySet(), value);
+			case "item", "i" -> SharedSuggestionProvider.suggestResource(BuiltInRegistries.ITEM.keySet(), value);
 			case "world", "w" -> SharedSuggestionProvider.suggestResource(source.levels().stream().map(ResourceKey::identifier), value);
 			case "time", "t" -> SharedSuggestionProvider.suggest(List.of("30m", "1h", "12h", "1d", "7d"), value);
 			case "radius", "r" -> SharedSuggestionProvider.suggest(List.of("5", "10", "25", "50"), value);
+			case "source", "s" -> SharedSuggestionProvider.suggest(COMMON_SOURCES, value);
 			default -> value.buildFuture();
 		};
 	}

@@ -3,7 +3,13 @@
 	"package": "zakyatto.meowlogger.mixin",
 	"compatibilityLevel": "JAVA_25",
 	"mixins": [
-		"BlockItemMixin"
+		"AbstractContainerMenuMixin",
+		"BlockItemMixin",
+		"BucketItemMixin",
+		"CompoundContainerAccessor",
+		"FireBlockMixin",
+		"ServerExplosionMixin",
+		"ServerPlayerGameModeMixin"
 	],
 	"injectors": {
 		"defaultRequire": 1

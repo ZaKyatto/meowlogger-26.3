@@ -15,7 +15,8 @@ import zakyatto.meowlogger.action.ActionType;
  * @param world       dimension to search, or null for all
  * @param min         inclusive lower corner of the search box, or null for no area limit
  * @param max         inclusive upper corner of the search box; null exactly when {@code min} is null
- * @param players     player names, matched case-insensitively
+ * @param players     names of responsible players, matched case-insensitively
+ * @param sources     sources such as {@code minecraft:player} or {@code minecraft:creeper}
  * @param types       action types
  * @param objects     block identifiers such as {@code minecraft:stone}, matched against the old or new block
  * @param sinceMillis only actions at or after this epoch-millisecond time; 0 for no limit
@@ -26,6 +27,7 @@ public record ActionFilter(
 		BlockPos min,
 		BlockPos max,
 		Set<String> players,
+		Set<String> sources,
 		Set<ActionType> types,
 		Set<String> objects,
 		long sinceMillis,
@@ -40,18 +42,19 @@ public record ActionFilter(
 			max = max.immutable();
 		}
 		players = Set.copyOf(players);
+		sources = Set.copyOf(sources);
 		types = Set.copyOf(types);
 		objects = Set.copyOf(objects);
 	}
 
 	/** Filter for every action at exactly one block. */
 	public static ActionFilter at(ResourceKey<Level> world, BlockPos pos) {
-		return new ActionFilter(world, pos, pos, Set.of(), Set.of(), Set.of(), 0, null);
+		return new ActionFilter(world, pos, pos, Set.of(), Set.of(), Set.of(), Set.of(), 0, null);
 	}
 
 	/** Copy of this filter restricted to actions that are (or are not) rolled back. */
 	public ActionFilter withRolledBack(boolean value) {
-		return new ActionFilter(world, min, max, players, types, objects, sinceMillis, value);
+		return new ActionFilter(world, min, max, players, sources, types, objects, sinceMillis, value);
 	}
 
 	/** Whether this filter limits the search by area or player, as rollback and restore require. */

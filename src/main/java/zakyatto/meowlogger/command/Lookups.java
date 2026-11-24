@@ -81,7 +81,7 @@ public final class Lookups {
 		long now = System.currentTimeMillis();
 		source.sendSystemMessage(LookupMessages.header(title, result.total()));
 		for (LoggedAction action : result.actions()) {
-			source.sendSystemMessage(LookupMessages.entry(action, now));
+			source.sendSystemMessage(LookupMessages.entry(action, now, source.registryAccess()));
 		}
 		if (result.pageCount() > 1) {
 			source.sendSystemMessage(LookupMessages.footer(result.page(), result.pageCount()));

@@ -1,5 +1,6 @@
 package zakyatto.meowlogger.rollback;
 
+import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.CompletionException;
 
@@ -7,6 +8,7 @@ import net.fabricmc.fabric.api.event.lifecycle.v1.ServerTickEvents;
 
 import net.minecraft.ChatFormatting;
 import net.minecraft.commands.CommandSourceStack;
+import net.minecraft.core.HolderLookup;
 import net.minecraft.network.chat.ClickEvent;
 import net.minecraft.network.chat.Component;
 import net.minecraft.network.chat.HoverEvent;
@@ -54,7 +56,9 @@ public final class Rollbacks {
 			return;
 		}
 		busy = true;
-		lookups.lookupForRollback(filter.withRolledBack(restore), MAX_ACTIONS, BlockChange::parseAll)
+		HolderLookup.Provider registries = source.getServer().registryAccess();
+		lookups.lookupForRollback(filter.withRolledBack(restore), MAX_ACTIONS,
+						(actions, conflicts) -> BlockChange.parseAll(actions, conflicts, registries))
 				.handleAsync((parsed, error) -> {
 					begin(source, parameters, restore, parsed, error);
 					return null;
@@ -101,8 +105,9 @@ public final class Rollbacks {
 			active = null;
 			busy = false;
 			int applied = record(task);
-			MeowLogger.LOGGER.info("{} {} {} actions ({} conflicting, {} invalid skipped) matching '{}'", task.source().getTextName(),
-					task.restore() ? "restored" : "rolled back", applied, task.conflicts(), task.invalid(), task.parameters());
+			MeowLogger.LOGGER.info("{} {} {} actions ({} conflicting, {} invalid, {} unapplicable skipped) matching '{}'",
+					task.source().getTextName(), task.restore() ? "restored" : "rolled back", applied,
+					task.conflicts(), task.invalid(), task.unapplied(), task.parameters());
 			task.source().sendSystemMessage(summary(task, applied));
 		}
 	}
@@ -129,15 +134,19 @@ public final class Rollbacks {
 	private static Component summary(RollbackTask task, int applied) {
 		Component message = prefix().append(Component.literal((task.restore() ? "Restored " : "Rolled back ") + applied
 				+ (applied == 1 ? " action" : " actions") + " in " + task.elapsedMillis() / 1000.0 + "s").withStyle(ChatFormatting.GREEN));
-		int skipped = task.conflicts() + task.invalid();
+		int skipped = task.conflicts() + task.invalid() + task.unapplied();
 		if (skipped > 0) {
-			MutableComponent reasons = Component.empty();
+			List<String> lines = new ArrayList<>(3);
 			if (task.conflicts() > 0) {
-				reasons.append(task.conflicts() + " because someone else changed the block later");
+				lines.add(task.conflicts() + " because someone else changed the block later");
 			}
 			if (task.invalid() > 0) {
-				reasons.append((task.conflicts() > 0 ? "\n" : "") + task.invalid() + " because the world or block no longer exists");
+				lines.add(task.invalid() + " because the world, block or item no longer exists");
 			}
+			if (task.unapplied() > 0) {
+				lines.add(task.unapplied() + " item moves because the container is gone, full, or no longer has the items");
+			}
+			Component reasons = Component.literal(String.join("\n", lines));
 			message = Component.empty().append(message).append(Component.literal(", skipped " + skipped).withStyle(style -> style
 					.withColor(ChatFormatting.YELLOW)
 					.withHoverEvent(new HoverEvent.ShowText(reasons))));

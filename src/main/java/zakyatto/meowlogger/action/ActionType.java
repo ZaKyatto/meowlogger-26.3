@@ -7,17 +7,31 @@ import java.util.Optional;
  * must never change or be reused.
  */
 public enum ActionType {
-	BLOCK_BREAK(1, "block-break"),
-	BLOCK_PLACE(2, "block-place");
+	BLOCK_BREAK(1, "block-break", true),
+	BLOCK_PLACE(2, "block-place", true),
+	/** A player put items into a container. */
+	ITEM_INSERT(3, "item-insert", false),
+	/** A player took items out of a container. */
+	ITEM_REMOVE(4, "item-remove", false);
 
 	private static final ActionType[] VALUES = values();
 
 	private final int id;
 	private final String key;
+	private final boolean blockChange;
 
-	ActionType(int id, String key) {
+	ActionType(int id, String key, boolean blockChange) {
 		this.id = id;
 		this.key = key;
+		this.blockChange = blockChange;
+	}
+
+	/**
+	 * Whether this action replaces one block state with another. Otherwise it changes a container's
+	 * contents, and the old and new states are both the container's.
+	 */
+	public boolean isBlockChange() {
+		return blockChange;
 	}
 
 	/** Stable database id of this action type. */
