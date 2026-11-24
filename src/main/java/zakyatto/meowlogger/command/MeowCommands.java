@@ -59,7 +59,7 @@ public final class MeowCommands {
 
 	private static final Component LOOKUP_TITLE = Component.literal("Lookup");
 	private static final SimpleCommandExceptionType UNSCOPED = new SimpleCommandExceptionType(
-			Component.literal("Rollback and restore need a radius: or player: parameter"));
+			Component.literal("Rollback and restore need a radius:, player: or id: parameter"));
 	private static final SimpleCommandExceptionType PURGE_EVERYTHING = new SimpleCommandExceptionType(
 			Component.literal("Purge needs a parameter that limits what is deleted, e.g. before:90d"));
 	private static final SimpleCommandExceptionType NO_PERMISSION = new SimpleCommandExceptionType(
@@ -80,8 +80,8 @@ public final class MeowCommands {
 				.then(inspect("i"))
 				.then(withParameters("lookup", CAN_LOOKUP, MeowCommands::lookup))
 				.then(withParameters("l", CAN_LOOKUP, MeowCommands::lookup))
-				.then(withParameters("rollback", CAN_ROLLBACK, (source, parameters) -> rollback(source, parameters, false)))
-				.then(withParameters("restore", CAN_ROLLBACK, (source, parameters) -> rollback(source, parameters, true)))
+				.then(withParameters("rollback", CLICK_PROBE.or(CAN_ROLLBACK), (source, parameters) -> rollback(source, parameters, false)))
+				.then(withParameters("restore", CLICK_PROBE.or(CAN_ROLLBACK), (source, parameters) -> rollback(source, parameters, true)))
 				.then(withParameters("purge", CAN_PURGE, MeowCommands::purge)
 						.then(literal("confirm").executes(context -> {
 							Purges.confirm(context.getSource());
@@ -138,6 +138,7 @@ public final class MeowCommands {
 	}
 
 	private static void rollback(CommandSourceStack source, String parameters, boolean restore) throws CommandSyntaxException {
+		requireAtRuntime(source, CAN_ROLLBACK);
 		ActionFilter filter = parse(source, parameters);
 		if (!filter.isScoped()) {
 			throw UNSCOPED.create();
@@ -198,6 +199,11 @@ public final class MeowCommands {
 		if (!permission.test(source)) {
 			throw NO_PERMISSION.create();
 		}
+	}
+
+	/** Whether {@code source} may roll back and restore, so lookups can offer per-action buttons. */
+	static boolean canRollback(CommandSourceStack source) {
+		return CAN_ROLLBACK.test(source);
 	}
 
 	private static Predicate<CommandSourceStack> permission(String name) {

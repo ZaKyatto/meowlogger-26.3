@@ -3,6 +3,7 @@ package zakyatto.meowlogger.command;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.util.Set;
 
@@ -61,6 +62,13 @@ class FilterParserTest {
 	}
 
 	@Test
+	void idsScopeARollback() throws CommandSyntaxException {
+		ActionFilter filter = parse("id:12,40");
+		assertEquals(Set.of(12L, 40L), filter.ids());
+		assertTrue(filter.isScoped());
+	}
+
+	@Test
 	void entitiesAreObjectsToo() throws CommandSyntaxException {
 		assertEquals(Set.of("minecraft:cow", "minecraft:wolf", "minecraft:diamond"), parse("e:cow,Minecraft:Wolf item:diamond").objects());
 	}
@@ -84,7 +92,7 @@ class FilterParserTest {
 	void rejectsInvalidInput() {
 		for (String input : new String[] {
 				"foo:bar", "radius", "radius:", ":5", "radius:-1", "radius:abc", "radius:1001",
-				"time:5", "time:1x", "before:", "before:x", "time:h", "time:1h-", "action:explode", "block:not_a_block", "block:Bad Block", "entity:stone", "world:!!", "source:!!"
+				"time:5", "time:1x", "before:", "before:x", "time:h", "time:1h-", "action:explode", "block:not_a_block", "block:Bad Block", "entity:stone", "id:abc", "id:1,x", "world:!!", "source:!!"
 		}) {
 			assertThrows(CommandSyntaxException.class, () -> parse(input), input);
 		}

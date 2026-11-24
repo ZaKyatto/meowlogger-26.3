@@ -12,9 +12,12 @@ import java.util.Arrays;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.UUID;
 import java.util.stream.Collectors;
+
+import it.unimi.dsi.fastutil.longs.LongArrayList;
 
 import net.minecraft.commands.arguments.blocks.BlockStateParser;
 import net.minecraft.core.registries.BuiltInRegistries;
@@ -23,8 +26,6 @@ import net.minecraft.world.entity.Entity;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.level.block.Block;
 import net.minecraft.world.level.block.state.BlockState;
-
-import it.unimi.dsi.fastutil.longs.LongArrayList;
 
 import org.sqlite.SQLiteConfig;
 
@@ -118,6 +119,11 @@ public final class SqliteDatabase implements Database {
 			JOIN objects o ON o.id = a.old_object_id
 			JOIN objects n ON n.id = a.new_object_id""";
 
+	private static final String INSERT_ACTION = """
+			INSERT INTO actions (time, type, source_id, player_id, world_id, x, y, z,
+			                     old_object_id, old_state, old_data, new_object_id, new_state, new_data)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""";
+
 	private final Connection connection;
 	private final Connection readConnection;
 	private final PreparedStatement insertAction;
@@ -146,18 +152,11 @@ public final class SqliteDatabase implements Database {
 		try {
 			connection.setAutoCommit(false);
 			migrate();
-			insertAction = connection.prepareStatement("""
-					INSERT INTO actions (time, type, source_id, player_id, world_id, x, y, z,
-					                     old_object_id, old_state, old_data, new_object_id, new_state, new_data)
-					VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""");
-			upsertPlayer = connection.prepareStatement(
-					"INSERT INTO players (uuid, name) VALUES (?, ?) ON CONFLICT (uuid) DO UPDATE SET name = excluded.name RETURNING id");
-			upsertWorld = connection.prepareStatement(
-					"INSERT INTO worlds (name) VALUES (?) ON CONFLICT (name) DO UPDATE SET name = excluded.name RETURNING id");
-			upsertObject = connection.prepareStatement(
-					"INSERT INTO objects (name) VALUES (?) ON CONFLICT (name) DO UPDATE SET name = excluded.name RETURNING id");
-			upsertSource = connection.prepareStatement(
-					"INSERT INTO sources (name) VALUES (?) ON CONFLICT (name) DO UPDATE SET name = excluded.name RETURNING id");
+			insertAction = connection.prepareStatement(INSERT_ACTION);
+			upsertPlayer = prepareUpsert("players", "uuid", "name");
+			upsertWorld = prepareUpsert("worlds", "name");
+			upsertObject = prepareUpsert("objects", "name");
+			upsertSource = prepareUpsert("sources", "name");
 			// Opened last, so the catch below only ever has the write connection to clean up.
 			SQLiteConfig readConfig = new SQLiteConfig();
 			readConfig.setReadOnly(true);
@@ -197,6 +196,23 @@ public final class SqliteDatabase implements Database {
 		connection.commit();
 	}
 
+	/** An upsert of {@code columns} into {@code table} (the first is the unique key; a second is updated) returning the row id. */
+	private PreparedStatement prepareUpsert(String table, String... columns) throws SQLException {
+		String update = columns.length > 1 ? columns[1] : columns[0];
+		return connection.prepareStatement("INSERT INTO " + table + " (" + String.join(", ", columns) + ") VALUES ("
+				+ "?, ".repeat(columns.length - 1) + "?) ON CONFLICT (" + columns[0] + ") DO UPDATE SET "
+				+ update + " = excluded." + update + " RETURNING id");
+	}
+
+	private static int queryId(PreparedStatement upsert) throws SQLException {
+		try (ResultSet result = upsert.executeQuery()) {
+			if (!result.next()) {
+				throw new SQLException("Upsert returned no id");
+			}
+			return result.getInt(1);
+		}
+	}
+
 	@Override
 	public void write(List<ActionRecord> records) throws SQLException {
 		try {
@@ -214,7 +230,7 @@ public final class SqliteDatabase implements Database {
 				insertAction.setInt(7, record.pos().getY());
 				insertAction.setInt(8, record.pos().getZ());
 				// Block changes store both blocks; item actions the container (block or entity type) and the item;
-				// entity actions the entity type twice.
+				// entity actions the entity type (or item) twice.
 				boolean entity = record.type().kind() == ActionType.Kind.ENTITY;
 				insertAction.setInt(9, entity ? objectId(record.object())
 						: record.oldState() != null ? objectId(record.oldState().getBlock())
@@ -229,12 +245,7 @@ public final class SqliteDatabase implements Database {
 			insertAction.executeBatch();
 			connection.commit();
 		} catch (SQLException | RuntimeException e) {
-			// Ids created inside the rolled-back transaction no longer exist.
-			playerIds.clear();
-			worldIds.clear();
-			objectIds.clear();
-			objectNameIds.clear();
-			sourceIds.clear();
+			clearIdCaches(); // ids created inside the rolled-back transaction no longer exist
 			try {
 				insertAction.clearBatch();
 				connection.rollback();
@@ -256,31 +267,31 @@ public final class SqliteDatabase implements Database {
 			update.executeBatch();
 			connection.commit();
 		} catch (SQLException | RuntimeException e) {
-			try {
-				connection.rollback();
-			} catch (SQLException rollbackFailure) {
-				e.addSuppressed(rollbackFailure);
-			}
+			rollbackAfter(e);
 			throw e;
 		}
 	}
 
 	@Override
 	public int delete(ActionFilter filter, int limit) throws SQLException {
-		Where where = Where.of(filter);
-		String sql = "DELETE FROM actions WHERE id IN (SELECT a.id FROM actions a" + where.sql() + " LIMIT ?)";
-		try (PreparedStatement statement = connection.prepareStatement(sql)) {
+		Where where = Where.of(filter, "actions");
+		try (PreparedStatement statement = connection.prepareStatement(
+				"DELETE FROM actions WHERE id IN (SELECT actions.id FROM actions" + where.sql() + " LIMIT ?)")) {
 			statement.setInt(where.bind(statement, 1), limit);
 			int deleted = statement.executeUpdate();
 			connection.commit();
 			return deleted;
 		} catch (SQLException | RuntimeException e) {
-			try {
-				connection.rollback();
-			} catch (SQLException rollbackFailure) {
-				e.addSuppressed(rollbackFailure);
-			}
+			rollbackAfter(e);
 			throw e;
+		}
+	}
+
+	private void rollbackAfter(Exception e) {
+		try {
+			connection.rollback();
+		} catch (SQLException rollbackFailure) {
+			e.addSuppressed(rollbackFailure);
 		}
 	}
 
@@ -334,13 +345,12 @@ public final class SqliteDatabase implements Database {
 		return id;
 	}
 
-	private static int queryId(PreparedStatement upsert) throws SQLException {
-		try (ResultSet result = upsert.executeQuery()) {
-			if (!result.next()) {
-				throw new SQLException("Upsert returned no id");
-			}
-			return result.getInt(1);
-		}
+	private void clearIdCaches() {
+		playerIds.clear();
+		worldIds.clear();
+		objectIds.clear();
+		objectNameIds.clear();
+		sourceIds.clear();
 	}
 
 	/** Returns the property part of a block state, e.g. {@code [facing=north,half=top]}, or null if it has none. */
@@ -353,7 +363,7 @@ public final class SqliteDatabase implements Database {
 	@Override
 	public int count(ActionFilter filter) throws SQLException {
 		Where where = Where.of(filter);
-		try (PreparedStatement statement = readConnection.prepareStatement("SELECT COUNT(*) FROM actions a" + where.sql())) {
+				try (PreparedStatement statement = readConnection.prepareStatement("SELECT COUNT(*) FROM actions a" + where.sql())) {
 			where.bind(statement, 1);
 			try (ResultSet result = statement.executeQuery()) {
 				result.next();
@@ -366,11 +376,11 @@ public final class SqliteDatabase implements Database {
 	public List<LoggedAction> lookup(ActionFilter filter, int offset, int limit) throws SQLException {
 		Where where = Where.of(filter);
 		String sql = LOOKUP_COLUMNS + where.sql() + " ORDER BY a.id DESC LIMIT ? OFFSET ?";
-		try (PreparedStatement statement = readConnection.prepareStatement(sql)) {
+				try (PreparedStatement statement = readConnection.prepareStatement(sql)) {
 			int next = where.bind(statement, 1);
 			statement.setInt(next, limit);
 			statement.setInt(next + 1, offset);
-			List<LoggedAction> actions = new ArrayList<>(limit);
+			List<LoggedAction> actions = new ArrayList<>(Math.min(limit, 1_000));
 			try (ResultSet result = statement.executeQuery()) {
 				while (result.next()) {
 					actions.add(new LoggedAction(result.getLong(1), result.getLong(2), ActionType.fromId(result.getInt(3)),
@@ -399,7 +409,7 @@ public final class SqliteDatabase implements Database {
 				+ " WHERE b.world_id = a.world_id AND b.x = a.x AND b.z = a.z AND b.y = a.y"
 				+ " AND b.id > a.id AND b.rolled_back = 0 AND b.type IN (" + BLOCK_CHANGE_TYPES + ")"
 				+ " AND NOT (" + inner.condition() + "))";
-		try (PreparedStatement statement = readConnection.prepareStatement(sql)) {
+				try (PreparedStatement statement = readConnection.prepareStatement(sql)) {
 			inner.bind(statement, outer.bind(statement, 1));
 			LongArrayList ids = new LongArrayList();
 			try (ResultSet result = statement.executeQuery()) {
@@ -435,8 +445,9 @@ public final class SqliteDatabase implements Database {
 						filter.min().getY(), filter.max().getY()));
 			}
 			if (!filter.players().isEmpty()) {
-				clauses.add(t + "player_id IN (SELECT id FROM players WHERE name COLLATE NOCASE IN (" + placeholders(filter.players().size()) + "))");
-				params.addAll(filter.players());
+				// LOWER works the same in every database; player names are ASCII.
+				clauses.add(t + "player_id IN (SELECT id FROM players WHERE LOWER(name) IN (" + placeholders(filter.players().size()) + "))");
+				filter.players().forEach(name -> params.add(name.toLowerCase(Locale.ROOT)));
 			}
 			if (!filter.sources().isEmpty()) {
 				clauses.add(t + "source_id IN (SELECT id FROM sources WHERE name IN (" + placeholders(filter.sources().size()) + "))");
@@ -451,6 +462,10 @@ public final class SqliteDatabase implements Database {
 				clauses.add("(" + t + "old_object_id IN " + ids + " OR " + t + "new_object_id IN " + ids + ")");
 				params.addAll(filter.objects());
 				params.addAll(filter.objects());
+			}
+			if (!filter.ids().isEmpty()) {
+				clauses.add(t + "id IN (" + placeholders(filter.ids().size()) + ")");
+				params.addAll(filter.ids());
 			}
 			if (filter.rolledBack() != null) {
 				clauses.add(t + "rolled_back = ?");

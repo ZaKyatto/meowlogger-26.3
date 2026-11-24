@@ -46,10 +46,7 @@ class SqliteDatabaseTest {
 	private static final UUID OTHER = UUID.fromString("00000000-0000-0000-0000-000000000002");
 	private static BlockState AIR;
 	private static final BlockPos ORIGIN = new BlockPos(1, -64, 3);
-	private static final ActionFilter ALL = new ActionFilter(null, null, null, Set.of(), Set.of(), Set.of(), Set.of(), 0, 0, null);
-
-	@TempDir
-	Path dir;
+	private static final ActionFilter ALL = new ActionFilter(null, null, null, Set.of(), Set.of(), Set.of(), Set.of(), 0, 0, null, Set.of());
 
 	@BeforeAll
 	static void bootstrap() {
@@ -59,48 +56,38 @@ class SqliteDatabaseTest {
 	}
 
 	@Test
-	void writesNormalizedRowsAndReopens() throws SQLException {
-		Path file = dir.resolve("test.sqlite");
-		BlockState stairs = Blocks.OAK_STAIRS.defaultBlockState().setValue(StairBlock.FACING, Direction.EAST);
-
-		try (SqliteDatabase db = new SqliteDatabase(file)) {
+	void filtersByActionId() throws SQLException {
+		try (Database db = open("ids")) {
 			db.write(List.of(
-					record(1, ActionType.BLOCK_BREAK, MEOW, "Meow", Level.OVERWORLD, new BlockPos.MutableBlockPos(1, -64, 3), Blocks.STONE.defaultBlockState(), AIR),
-					record(2, ActionType.BLOCK_PLACE, MEOW, "Meow", Level.NETHER, ORIGIN, AIR, stairs)));
+					record(1, ActionType.BLOCK_BREAK, MEOW, "Meow", Level.OVERWORLD, ORIGIN, Blocks.STONE.defaultBlockState(), AIR),
+					record(2, ActionType.BLOCK_BREAK, MEOW, "Meow", Level.OVERWORLD, ORIGIN, Blocks.STONE.defaultBlockState(), AIR),
+					record(3, ActionType.BLOCK_BREAK, MEOW, "Meow", Level.OVERWORLD, ORIGIN, Blocks.STONE.defaultBlockState(), AIR)));
+			List<Long> all = ids(db, ALL);
+			ActionFilter one = new ActionFilter(null, null, null, Set.of(), Set.of(), Set.of(), Set.of(), 0, 0, null, Set.of(all.get(1)));
+			assertEquals(List.of(all.get(1)), ids(db, one));
 		}
-		// Reopening must not re-run the schema and must reuse existing ids.
-		try (SqliteDatabase db = new SqliteDatabase(file)) {
-			db.write(List.of(record(3, ActionType.BLOCK_BREAK, MEOW, "Meow", Level.OVERWORLD, ORIGIN, stairs, AIR)));
-		}
+	}
 
-		try (Connection c = open(file); Statement s = c.createStatement()) {
-			assertEquals(3, count(s, "actions"));
-			assertEquals(1, count(s, "players"));
-			assertEquals(2, count(s, "worlds"));
-			assertEquals(3, count(s, "objects"));
-			try (ResultSet r = s.executeQuery("""
-					SELECT a.type, w.name, a.x, a.y, a.z, o.name, a.old_state, n.name, a.new_state
-					FROM actions a
-					JOIN worlds w ON w.id = a.world_id
-					JOIN objects o ON o.id = a.old_object_id
-					JOIN objects n ON n.id = a.new_object_id
-					WHERE a.id = 2""")) {
-				r.next();
-				assertEquals(ActionType.BLOCK_PLACE.id(), r.getInt(1));
-				assertEquals("minecraft:the_nether", r.getString(2));
-				assertEquals(List.of(1, -64, 3), List.of(r.getInt(3), r.getInt(4), r.getInt(5)));
-				assertEquals("minecraft:air", r.getString(6));
-				assertNull(r.getString(7));
-				assertEquals("minecraft:oak_stairs", r.getString(8));
-				assertEquals("[facing=east,half=bottom,shape=straight,waterlogged=false]", r.getString(9));
-			}
+	@Test
+	void reusesNamesAcrossReopensAndFollowsRenames() throws SQLException {
+		try (Database db = open("reopen")) {
+			db.write(List.of(record(1, ActionType.BLOCK_BREAK, MEOW, "Meow", Level.OVERWORLD, ORIGIN, Blocks.STONE.defaultBlockState(), AIR)));
+		}
+		try (Database db = open("reopen")) {
+			db.write(List.of(record(2, ActionType.BLOCK_PLACE, MEOW, "MeowRenamed", Level.OVERWORLD, ORIGIN, AIR, Blocks.STONE.defaultBlockState())));
+			List<LoggedAction> actions = db.lookup(ALL, 0, 10);
+			assertEquals(2, actions.size());
+			assertEquals(List.of("MeowRenamed", "MeowRenamed"), actions.stream().map(LoggedAction::playerName).toList(),
+					"the same UUID is one player row, carrying the latest name");
+			assertEquals(List.of("minecraft:stone", "minecraft:air"), List.of(actions.get(1).oldObject(), actions.get(1).newObject()));
+			assertEquals(2, db.count(filter(Set.of("meowrenamed"), Set.of(), Set.of("minecraft:stone"), 0)), "names match case-insensitively");
 		}
 	}
 
 	@Test
 	void lookupFiltersAndPaginates() throws SQLException {
 		BlockState dirt = Blocks.DIRT.defaultBlockState();
-		try (SqliteDatabase db = new SqliteDatabase(dir.resolve("lookup.sqlite"))) {
+		try (Database db = open("lookup")) {
 			db.write(List.of(
 					record(1_000, ActionType.BLOCK_BREAK, MEOW, "Meow", Level.OVERWORLD, ORIGIN, Blocks.STONE.defaultBlockState(), AIR),
 					record(2_000, ActionType.BLOCK_PLACE, MEOW, "Meow", Level.NETHER, ORIGIN, AIR, Blocks.NETHERRACK.defaultBlockState()),
@@ -119,8 +106,8 @@ class SqliteDatabaseTest {
 			assertNull(place.newData());
 
 			assertEquals(4, db.count(ALL));
-			assertEquals(3, db.count(new ActionFilter(Level.OVERWORLD, new BlockPos(0, -70, 0), new BlockPos(12, 80, 12), Set.of(), Set.of(), Set.of(), Set.of(), 0, 0, null)));
-			assertEquals(2, db.count(new ActionFilter(Level.OVERWORLD, new BlockPos(0, -70, 0), new BlockPos(12, 69, 12), Set.of(), Set.of(), Set.of(), Set.of(), 0, 0, null)), "y is bounded too");
+			assertEquals(3, db.count(new ActionFilter(Level.OVERWORLD, new BlockPos(0, -70, 0), new BlockPos(12, 80, 12), Set.of(), Set.of(), Set.of(), Set.of(), 0, 0, null, Set.of())));
+			assertEquals(2, db.count(new ActionFilter(Level.OVERWORLD, new BlockPos(0, -70, 0), new BlockPos(12, 69, 12), Set.of(), Set.of(), Set.of(), Set.of(), 0, 0, null, Set.of())), "y is bounded too");
 			assertEquals(2, db.count(filter(Set.of("mEoW"), Set.of(), Set.of(), 0)), "player names are case-insensitive");
 			assertEquals(4, db.count(filter(Set.of("meow", "other"), Set.of(), Set.of(), 0)));
 			assertEquals(0, db.count(filter(Set.of("nobody"), Set.of(), Set.of(), 0)));
@@ -136,68 +123,11 @@ class SqliteDatabaseTest {
 	}
 
 	@Test
-	void positionLookupsUseTheIndex() throws SQLException {
-		Path file = dir.resolve("plan.sqlite");
-		new SqliteDatabase(file).close();
-		SqliteDatabase.Where where = SqliteDatabase.Where.of(new ActionFilter(Level.OVERWORLD, ORIGIN, ORIGIN.offset(5, 5, 5), Set.of(), Set.of(), Set.of(), Set.of(), 0, 0, null));
-		try (Connection c = open(file); PreparedStatement s = c.prepareStatement("EXPLAIN QUERY PLAN SELECT COUNT(*) FROM actions a" + where.sql())) {
-			where.bind(s, 1);
-			StringBuilder plan = new StringBuilder();
-			try (ResultSet r = s.executeQuery()) {
-				while (r.next()) {
-					plan.append(r.getString("detail")).append('\n');
-				}
-			}
-			assertTrue(plan.toString().contains("actions_position"), plan.toString());
-		}
-	}
-
-	@Test
-	void migratesVersionOneDatabase() throws SQLException {
-		Path file = dir.resolve("v1.sqlite");
-		try (Connection c = open(file); Statement s = c.createStatement()) {
-			s.executeUpdate("CREATE TABLE players (id INTEGER PRIMARY KEY, uuid TEXT NOT NULL UNIQUE, name TEXT NOT NULL)");
-			s.executeUpdate("CREATE TABLE worlds (id INTEGER PRIMARY KEY, name TEXT NOT NULL UNIQUE)");
-			s.executeUpdate("CREATE TABLE objects (id INTEGER PRIMARY KEY, name TEXT NOT NULL UNIQUE)");
-			s.executeUpdate("""
-					CREATE TABLE actions (id INTEGER PRIMARY KEY, time INTEGER NOT NULL, type INTEGER NOT NULL,
-					player_id INTEGER NOT NULL, world_id INTEGER NOT NULL, x INTEGER NOT NULL, y INTEGER NOT NULL, z INTEGER NOT NULL,
-					old_object_id INTEGER NOT NULL, old_state TEXT, new_object_id INTEGER NOT NULL, new_state TEXT)""");
-			s.executeUpdate("INSERT INTO players VALUES (1, '" + MEOW + "', 'Meow')");
-			s.executeUpdate("INSERT INTO worlds VALUES (1, 'minecraft:overworld')");
-			s.executeUpdate("INSERT INTO objects VALUES (1, 'minecraft:oak_log'), (2, 'minecraft:air')");
-			s.executeUpdate("INSERT INTO actions VALUES (7, 1234, 1, 1, 1, 1, -64, 3, 1, '[axis=x]', 2, NULL)");
-			s.executeUpdate("PRAGMA user_version = 1");
-		}
-		try (SqliteDatabase db = new SqliteDatabase(file)) {
-			List<LoggedAction> actions = db.lookup(ActionFilter.at(Level.OVERWORLD, ORIGIN), 0, 10);
-			assertEquals(1, actions.size());
-			LoggedAction action = actions.getFirst();
-			assertEquals(List.of(7L, 1234L, ActionType.BLOCK_BREAK, ActionRecord.PLAYER_SOURCE, "Meow", "minecraft:oak_log", "[axis=x]", false),
-					List.of(action.id(), action.timeMillis(), action.type(), action.source(), action.playerName(),
-							action.oldObject(), action.oldState(), action.rolledBack()));
-			// The migrated table accepts the new kinds of rows.
-			db.write(List.of(new ActionRecord(2_000, ActionType.BLOCK_BREAK, "minecraft:creeper", null, null, Level.OVERWORLD, ORIGIN,
-					AIR, null, AIR, null, null)));
-		}
-		try (Connection c = open(file); Statement s = c.createStatement()) {
-			try (ResultSet r = s.executeQuery("SELECT COUNT(*) FROM sqlite_master WHERE type = 'index' AND name LIKE 'actions_%'")) {
-				r.next();
-				assertEquals(3, r.getInt(1));
-			}
-			try (ResultSet r = s.executeQuery("PRAGMA user_version")) {
-				r.next();
-				assertEquals(4, r.getInt(1));
-			}
-		}
-	}
-
-	@Test
 	void storesNonPlayerSourcesAndBlockEntityData() throws SQLException {
 		CompoundTag chest = new CompoundTag();
 		chest.putString("id", "minecraft:chest");
 		chest.putString("CustomName", "\"loot\"");
-		try (SqliteDatabase db = new SqliteDatabase(dir.resolve("sources.sqlite"))) {
+		try (Database db = open("sources")) {
 			db.write(List.of(
 					new ActionRecord(1, ActionType.BLOCK_BREAK, "minecraft:creeper", null, null, Level.OVERWORLD, ORIGIN,
 							Blocks.CHEST.defaultBlockState(), chest, AIR, null, null),
@@ -225,7 +155,7 @@ class SqliteDatabaseTest {
 		cart.putString("id", "minecraft:chest_minecart");
 		CompoundTag items = new CompoundTag();
 		items.putInt("Count", 3);
-		try (SqliteDatabase db = new SqliteDatabase(dir.resolve("cart.sqlite"))) {
+		try (Database db = open("cart")) {
 			db.write(List.of(new ActionRecord(1, ActionType.ITEM_REMOVE, ActionRecord.PLAYER_SOURCE, MEOW, "Meow", Level.OVERWORLD, ORIGIN,
 					null, cart, null, items, "minecraft:diamond")));
 			LoggedAction theft = db.lookup(filter(Set.of(), Set.of(), Set.of("minecraft:chest_minecart"), 0), 0, 10).getFirst();
@@ -236,13 +166,13 @@ class SqliteDatabaseTest {
 
 	@Test
 	void deletesMatchingActionsInChunks() throws SQLException {
-		try (SqliteDatabase db = new SqliteDatabase(dir.resolve("purge.sqlite"))) {
+		try (Database db = open("purge")) {
 			db.write(List.of(
 					record(1_000, ActionType.BLOCK_BREAK, MEOW, "Meow", Level.OVERWORLD, ORIGIN, Blocks.STONE.defaultBlockState(), AIR),
 					record(2_000, ActionType.BLOCK_BREAK, MEOW, "Meow", Level.OVERWORLD, ORIGIN, Blocks.STONE.defaultBlockState(), AIR),
 					record(3_000, ActionType.BLOCK_BREAK, OTHER, "Other", Level.OVERWORLD, ORIGIN, Blocks.STONE.defaultBlockState(), AIR),
 					record(9_000, ActionType.BLOCK_BREAK, MEOW, "Meow", Level.OVERWORLD, ORIGIN, Blocks.STONE.defaultBlockState(), AIR)));
-			ActionFilter oldMeow = new ActionFilter(null, null, null, Set.of("meow"), Set.of(), Set.of(), Set.of(), 0, 5_000, null);
+			ActionFilter oldMeow = new ActionFilter(null, null, null, Set.of("meow"), Set.of(), Set.of(), Set.of(), 0, 5_000, null, Set.of());
 
 			assertEquals(2, ids(db, oldMeow).size(), "before: excludes actions at or after its time");
 			assertEquals(1, db.delete(oldMeow, 1));
@@ -257,7 +187,7 @@ class SqliteDatabaseTest {
 		CompoundTag cow = new CompoundTag();
 		cow.putString("id", "minecraft:cow");
 		cow.putFloat("Health", 0);
-		try (SqliteDatabase db = new SqliteDatabase(dir.resolve("entities.sqlite"))) {
+		try (Database db = open("entities")) {
 			db.write(List.of(
 					record(1, ActionType.BLOCK_BREAK, MEOW, "Meow", Level.OVERWORLD, ORIGIN, Blocks.GRASS_BLOCK.defaultBlockState(), AIR),
 					new ActionRecord(2, ActionType.ENTITY_KILL, "minecraft:arrow", OTHER, "Other", Level.OVERWORLD, ORIGIN,
@@ -277,7 +207,7 @@ class SqliteDatabaseTest {
 	@Test
 	void findsActionsOverriddenByLaterOutsideActions() throws SQLException {
 		BlockPos other = new BlockPos(50, 64, 50);
-		try (SqliteDatabase db = new SqliteDatabase(dir.resolve("conflicts.sqlite"))) {
+		try (Database db = open("conflicts")) {
 			db.write(List.of(
 					record(1, ActionType.BLOCK_BREAK, MEOW, "Meow", Level.OVERWORLD, ORIGIN, Blocks.STONE.defaultBlockState(), AIR),
 					record(2, ActionType.BLOCK_PLACE, OTHER, "Other", Level.OVERWORLD, ORIGIN, AIR, Blocks.DIRT.defaultBlockState()),
@@ -301,7 +231,7 @@ class SqliteDatabaseTest {
 
 	@Test
 	void storesItemActionsAndNeverCountsThemAsConflicts() throws SQLException {
-		try (SqliteDatabase db = new SqliteDatabase(dir.resolve("items.sqlite"))) {
+		try (Database db = open("items")) {
 			db.write(List.of(
 					itemRecord(1, ActionType.ITEM_REMOVE, MEOW, "Meow", ORIGIN, "minecraft:diamond"),
 					itemRecord(2, ActionType.ITEM_INSERT, OTHER, "Other", ORIGIN, "minecraft:dirt"),
@@ -324,7 +254,7 @@ class SqliteDatabaseTest {
 
 	@Test
 	void tracksRolledBackFlag() throws SQLException {
-		try (SqliteDatabase db = new SqliteDatabase(dir.resolve("flags.sqlite"))) {
+		try (Database db = open("flags")) {
 			db.write(List.of(
 					record(1, ActionType.BLOCK_BREAK, MEOW, "Meow", Level.OVERWORLD, ORIGIN, Blocks.STONE.defaultBlockState(), AIR),
 					record(2, ActionType.BLOCK_PLACE, MEOW, "Meow", Level.OVERWORLD, ORIGIN, AIR, Blocks.DIRT.defaultBlockState()),
@@ -340,17 +270,8 @@ class SqliteDatabaseTest {
 		}
 	}
 
-	@Test
-	void refusesNewerSchema() throws SQLException {
-		Path file = dir.resolve("newer.sqlite");
-		try (Connection c = open(file); Statement s = c.createStatement()) {
-			s.executeUpdate("PRAGMA user_version = 99");
-		}
-		assertThrows(SQLException.class, () -> new SqliteDatabase(file));
-	}
-
 	private static ActionFilter filter(Set<String> players, Set<ActionType> types, Set<String> objects, long since) {
-		return new ActionFilter(null, null, null, players, Set.of(), types, objects, since, 0, null);
+		return new ActionFilter(null, null, null, players, Set.of(), types, objects, since, 0, null, Set.of());
 	}
 
 	private static ActionRecord record(long time, ActionType type, UUID player, String name, ResourceKey<Level> world,
@@ -366,14 +287,127 @@ class SqliteDatabaseTest {
 	}
 
 	private static ActionFilter sourceFilter(String source) {
-		return new ActionFilter(null, null, null, Set.of(), Set.of(source), Set.of(), Set.of(), 0, 0, null);
+		return new ActionFilter(null, null, null, Set.of(), Set.of(source), Set.of(), Set.of(), 0, 0, null, Set.of());
 	}
 
-	private static List<Long> ids(SqliteDatabase db, ActionFilter filter) throws SQLException {
+	private static List<Long> ids(Database db, ActionFilter filter) throws SQLException {
 		return db.lookup(filter, 0, 100).stream().map(LoggedAction::id).toList();
 	}
 
-	private static Connection open(Path file) throws SQLException {
+	@TempDir
+	Path dir;
+
+	/** Opens the database file called {@code name} in the test's temporary folder. */
+	private Database open(String name) throws SQLException {
+		return new SqliteDatabase(dir.resolve(name + ".sqlite"));
+	}
+
+	@Test
+	void writesNormalizedRowsAndReopens() throws SQLException {
+		Path file = dir.resolve("test.sqlite");
+		BlockState stairs = Blocks.OAK_STAIRS.defaultBlockState().setValue(StairBlock.FACING, Direction.EAST);
+
+		try (SqliteDatabase db = new SqliteDatabase(file)) {
+			db.write(List.of(
+					record(1, ActionType.BLOCK_BREAK, MEOW, "Meow", Level.OVERWORLD, new BlockPos.MutableBlockPos(1, -64, 3), Blocks.STONE.defaultBlockState(), AIR),
+					record(2, ActionType.BLOCK_PLACE, MEOW, "Meow", Level.NETHER, ORIGIN, AIR, stairs)));
+		}
+		// Reopening must not re-run the schema and must reuse existing ids.
+		try (SqliteDatabase db = new SqliteDatabase(file)) {
+			db.write(List.of(record(3, ActionType.BLOCK_BREAK, MEOW, "Meow", Level.OVERWORLD, ORIGIN, stairs, AIR)));
+		}
+
+		try (Connection c = connect(file); Statement s = c.createStatement()) {
+			assertEquals(3, count(s, "actions"));
+			assertEquals(1, count(s, "players"));
+			assertEquals(2, count(s, "worlds"));
+			assertEquals(3, count(s, "objects"));
+			try (ResultSet r = s.executeQuery("""
+					SELECT a.type, w.name, a.x, a.y, a.z, o.name, a.old_state, n.name, a.new_state
+					FROM actions a
+					JOIN worlds w ON w.id = a.world_id
+					JOIN objects o ON o.id = a.old_object_id
+					JOIN objects n ON n.id = a.new_object_id
+					WHERE a.id = 2""")) {
+				r.next();
+				assertEquals(ActionType.BLOCK_PLACE.id(), r.getInt(1));
+				assertEquals("minecraft:the_nether", r.getString(2));
+				assertEquals(List.of(1, -64, 3), List.of(r.getInt(3), r.getInt(4), r.getInt(5)));
+				assertEquals("minecraft:air", r.getString(6));
+				assertNull(r.getString(7));
+				assertEquals("minecraft:oak_stairs", r.getString(8));
+				assertEquals("[facing=east,half=bottom,shape=straight,waterlogged=false]", r.getString(9));
+			}
+		}
+	}
+
+	@Test
+	void positionLookupsUseTheIndex() throws SQLException {
+		Path file = dir.resolve("plan.sqlite");
+		new SqliteDatabase(file).close();
+		SqliteDatabase.Where where = SqliteDatabase.Where.of(new ActionFilter(Level.OVERWORLD, ORIGIN, ORIGIN.offset(5, 5, 5), Set.of(), Set.of(), Set.of(), Set.of(), 0, 0, null, Set.of()));
+		try (Connection c = connect(file); PreparedStatement s = c.prepareStatement("EXPLAIN QUERY PLAN SELECT COUNT(*) FROM actions a" + where.sql())) {
+			where.bind(s, 1);
+			StringBuilder plan = new StringBuilder();
+			try (ResultSet r = s.executeQuery()) {
+				while (r.next()) {
+					plan.append(r.getString("detail")).append('\n');
+				}
+			}
+			assertTrue(plan.toString().contains("actions_position"), plan.toString());
+		}
+	}
+
+	@Test
+	void migratesVersionOneDatabase() throws SQLException {
+		Path file = dir.resolve("v1.sqlite");
+		try (Connection c = connect(file); Statement s = c.createStatement()) {
+			s.executeUpdate("CREATE TABLE players (id INTEGER PRIMARY KEY, uuid TEXT NOT NULL UNIQUE, name TEXT NOT NULL)");
+			s.executeUpdate("CREATE TABLE worlds (id INTEGER PRIMARY KEY, name TEXT NOT NULL UNIQUE)");
+			s.executeUpdate("CREATE TABLE objects (id INTEGER PRIMARY KEY, name TEXT NOT NULL UNIQUE)");
+			s.executeUpdate("""
+					CREATE TABLE actions (id INTEGER PRIMARY KEY, time INTEGER NOT NULL, type INTEGER NOT NULL,
+					player_id INTEGER NOT NULL, world_id INTEGER NOT NULL, x INTEGER NOT NULL, y INTEGER NOT NULL, z INTEGER NOT NULL,
+					old_object_id INTEGER NOT NULL, old_state TEXT, new_object_id INTEGER NOT NULL, new_state TEXT)""");
+			s.executeUpdate("INSERT INTO players VALUES (1, '" + MEOW + "', 'Meow')");
+			s.executeUpdate("INSERT INTO worlds VALUES (1, 'minecraft:overworld')");
+			s.executeUpdate("INSERT INTO objects VALUES (1, 'minecraft:oak_log'), (2, 'minecraft:air')");
+			s.executeUpdate("INSERT INTO actions VALUES (7, 1234, 1, 1, 1, 1, -64, 3, 1, '[axis=x]', 2, NULL)");
+			s.executeUpdate("PRAGMA user_version = 1");
+		}
+		try (SqliteDatabase db = new SqliteDatabase(file)) {
+			List<LoggedAction> actions = db.lookup(ActionFilter.at(Level.OVERWORLD, ORIGIN), 0, 10);
+			assertEquals(1, actions.size());
+			LoggedAction action = actions.getFirst();
+			assertEquals(List.of(7L, 1234L, ActionType.BLOCK_BREAK, ActionRecord.PLAYER_SOURCE, "Meow", "minecraft:oak_log", "[axis=x]", false),
+					List.of(action.id(), action.timeMillis(), action.type(), action.source(), action.playerName(),
+							action.oldObject(), action.oldState(), action.rolledBack()));
+			// The migrated table accepts the new kinds of rows.
+			db.write(List.of(new ActionRecord(2_000, ActionType.BLOCK_BREAK, "minecraft:creeper", null, null, Level.OVERWORLD, ORIGIN,
+					AIR, null, AIR, null, null)));
+		}
+		try (Connection c = connect(file); Statement s = c.createStatement()) {
+			try (ResultSet r = s.executeQuery("SELECT COUNT(*) FROM sqlite_master WHERE type = 'index' AND name LIKE 'actions_%'")) {
+				r.next();
+				assertEquals(3, r.getInt(1));
+			}
+			try (ResultSet r = s.executeQuery("PRAGMA user_version")) {
+				r.next();
+				assertEquals(4, r.getInt(1));
+			}
+		}
+	}
+
+	@Test
+	void refusesNewerSchema() throws SQLException {
+		Path file = dir.resolve("newer.sqlite");
+		try (Connection c = connect(file); Statement s = c.createStatement()) {
+			s.executeUpdate("PRAGMA user_version = 99");
+		}
+		assertThrows(SQLException.class, () -> new SqliteDatabase(file));
+	}
+
+	private static Connection connect(Path file) throws SQLException {
 		return new SQLiteConfig().createConnection("jdbc:sqlite:" + file);
 	}
 

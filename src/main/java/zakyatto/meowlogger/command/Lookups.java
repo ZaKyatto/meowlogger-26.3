@@ -79,9 +79,10 @@ public final class Lookups {
 			return;
 		}
 		long now = System.currentTimeMillis();
+		boolean buttons = MeowCommands.canRollback(source);
 		source.sendSystemMessage(LookupMessages.header(title, result.total()));
 		for (LoggedAction action : result.actions()) {
-			source.sendSystemMessage(LookupMessages.entry(action, now, source.registryAccess()));
+			source.sendSystemMessage(LookupMessages.entry(action, now, source.registryAccess(), buttons));
 		}
 		if (result.pageCount() > 1) {
 			source.sendSystemMessage(LookupMessages.footer(result.page(), result.pageCount()));

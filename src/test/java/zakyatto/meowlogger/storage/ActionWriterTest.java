@@ -26,7 +26,7 @@ import zakyatto.meowlogger.query.ActionFilter;
 
 class ActionWriterTest {
 	private static final UUID MEOW = UUID.fromString("00000000-0000-0000-0000-000000000001");
-	private static final ActionFilter ALL = new ActionFilter(null, null, null, Set.of(), Set.of(), Set.of(), Set.of(), 0, 0, null);
+	private static final ActionFilter ALL = new ActionFilter(null, null, null, Set.of(), Set.of(), Set.of(), Set.of(), 0, 0, null, Set.of());
 
 	@TempDir
 	Path dir;
@@ -45,7 +45,7 @@ class ActionWriterTest {
 			writer.submit(record(i, new BlockPos(i % 100, 64, i / 100)));
 		}
 		CompletableFuture<Integer> purge = writer.submitPurge(
-				new ActionFilter(null, null, null, Set.of(), Set.of(), Set.of(), Set.of(), 0, 20_000, null));
+				new ActionFilter(null, null, null, Set.of(), Set.of(), Set.of(), Set.of(), 0, 20_000, null, Set.of()));
 		assertEquals(20_000, purge.get(30, TimeUnit.SECONDS), "every action queued before the purge is written first");
 		writer.close();
 

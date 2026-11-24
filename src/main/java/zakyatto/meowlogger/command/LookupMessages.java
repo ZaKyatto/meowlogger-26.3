@@ -61,7 +61,12 @@ final class LookupMessages {
 				.append(Component.literal(": no actions found").withStyle(ChatFormatting.GRAY));
 	}
 
-	static Component entry(LoggedAction action, long nowMillis, HolderLookup.Provider registries) {
+	/**
+	 * One lookup line.
+	 *
+	 * @param withButton whether to add a button that rolls back (or restores) just this action
+	 */
+	static Component entry(LoggedAction action, long nowMillis, HolderLookup.Provider registries, boolean withButton) {
 		MutableComponent verb = switch (action.type()) {
 			case BLOCK_BREAK -> Component.literal("broke").withStyle(ChatFormatting.RED);
 			case BLOCK_PLACE -> Component.literal("placed").withStyle(ChatFormatting.GREEN);
@@ -105,7 +110,8 @@ final class LookupMessages {
 
 		Component when = Component.literal(ago(nowMillis - action.timeMillis())).withStyle(style -> style
 				.withColor(ChatFormatting.GRAY)
-				.withHoverEvent(new HoverEvent.ShowText(Component.literal(TIMESTAMP.format(Instant.ofEpochMilli(action.timeMillis()))))));
+				.withHoverEvent(new HoverEvent.ShowText(Component.literal(TIMESTAMP.format(Instant.ofEpochMilli(action.timeMillis()))
+						+ "\nAction #" + action.id()))));
 		String teleport = "/ml teleport " + action.world() + " " + action.x() + " " + action.y() + " " + action.z();
 		Component position = Component.literal(action.x() + " " + action.y() + " " + action.z()).withStyle(style -> style
 				.withColor(ChatFormatting.GRAY)
@@ -124,7 +130,18 @@ final class LookupMessages {
 		} else {
 			line.append(description);
 		}
-		return line.append(Component.literal(" at ").withStyle(ChatFormatting.GRAY)).append(position);
+		line.append(Component.literal(" at ").withStyle(ChatFormatting.GRAY)).append(position);
+		return withButton ? line.append(" ").append(undoButton(action)) : line;
+	}
+
+	/** [↶] to roll back just this action, or [↷] to restore it if it is rolled back. */
+	private static Component undoButton(LoggedAction action) {
+		boolean restore = action.rolledBack();
+		String command = "/ml " + (restore ? "restore" : "rollback") + " id:" + action.id();
+		return Component.literal(restore ? "[↷]" : "[↶]").withStyle(style -> style
+				.withColor(restore ? ChatFormatting.GREEN : ChatFormatting.GOLD)
+				.withClickEvent(new ClickEvent.RunCommand(command))
+				.withHoverEvent(new HoverEvent.ShowText(Component.literal(restore ? "Restore this action" : "Roll back this action"))));
 	}
 
 	private static Component block(String object, LoggedAction action) {

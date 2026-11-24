@@ -52,7 +52,7 @@ fill the log; only fluid a player placed is. Not logged yet: signs edited after 
 | `/ml inspect` (`/ml i`) | Toggle inspector mode. Left-click a block to see its history; right-click a block face to see the block in front of it (for blocks that were broken). |
 | `/ml lookup <params>` (`/ml l`) | Search the log, newest first. |
 | `/ml page <n>` | Show another page of your last lookup or inspection. |
-| `/ml rollback <params>` | Undo matching actions. Needs a `radius:` or `player:` parameter. |
+| `/ml rollback <params>` | Undo matching actions. Needs a `radius:`, `player:` or `id:` parameter. |
 | `/ml restore <params>` | Redo matching actions that were rolled back. Same parameters as rollback. |
 | `/ml teleport <world> <pos>` | Teleport to a logged position (what clicking a lookup's coordinates runs). |
 | `/ml purge <params>` | Permanently delete matching actions, e.g. `/ml purge before:90d`. Shows how many match and asks you to confirm with `/ml purge confirm` within 60 seconds. |
@@ -63,6 +63,10 @@ the log), so later work by other players is never overwritten. Changes the log d
 like grass spreading or water flowing in, are overwritten. Up to 250,000 actions can be rolled back at
 once (configurable), applied over several ticks so the server doesn't freeze. Hover over the result message to see how
 many actions of each type were undone; it also has an **[Undo]** button.
+
+Each lookup line ends with a **[↶]** button that rolls back just that action (or **[↷]** to restore
+it, if it is rolled back), for anyone allowed to roll back. Hovering over the time shows the
+action's number, which `id:` accepts.
 
 Lookup parameters can be combined; lists are comma-separated:
 
@@ -78,6 +82,7 @@ Lookup parameters can be combined; lists are comma-separated:
 | `time:` / `t:` | `t:1d12h` | Within this time (`s`, `m`, `h`, `d`, `w`) |
 | `before:` | `before:30d` | Longer ago than this |
 | `world:` / `w:` | `w:the_nether` | Only this dimension |
+| `id:` | `id:1234,1240` | Only these actions (the number shown when hovering over a lookup line's time) |
 
 Example: `/ml l r:20 a:block-break b:chest t:2d`
 
@@ -94,6 +99,8 @@ Without one, reload requires operator level 3, purge level 4, and the others lev
 logged, delete old actions automatically, and tune rollback and lookup limits.
 
 Every option is explained in comments inside the file itself.
+
+Actions are stored in `world/meowlogger.sqlite`.
 
 ## Development
 

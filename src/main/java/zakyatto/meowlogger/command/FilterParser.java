@@ -34,10 +34,10 @@ import zakyatto.meowlogger.query.ActionFilter;
  * into an {@link ActionFilter}, and suggests completions for them.
  */
 public final class FilterParser {
-	private static final List<String> KEYS = List.of("radius:", "player:", "source:", "action:", "block:", "item:", "entity:", "time:", "before:", "world:");
+	private static final List<String> KEYS = List.of("radius:", "player:", "source:", "action:", "block:", "item:", "entity:", "time:", "before:", "world:", "id:");
 	private static final Pattern DURATION_PART = Pattern.compile("(\\d{1,9})([smhdw])");
 
-	private static final DynamicCommandExceptionType UNKNOWN_KEY = error(key -> "Unknown parameter '" + key + "'. Use one of: radius, player, source, action, block, item, entity, time, before, world");
+	private static final DynamicCommandExceptionType UNKNOWN_KEY = error(key -> "Unknown parameter '" + key + "'. Use one of: radius, player, source, action, block, item, entity, time, before, world, id");
 	private static final DynamicCommandExceptionType MALFORMED = error(token -> "Expected key:value, got '" + token + "'");
 	private static final Dynamic2CommandExceptionType BAD_RADIUS = new Dynamic2CommandExceptionType((value, max) ->
 			Component.literal("Radius must be a whole number from 0 to " + max + ", got '" + value + "'"));
@@ -49,6 +49,7 @@ public final class FilterParser {
 	private static final DynamicCommandExceptionType BAD_SOURCE = error(value -> "Invalid source '" + value + "'");
 	private static final List<String> COMMON_SOURCES = List.of("player", "tnt", "creeper", "fire", "end_crystal", "tnt_minecart", "fireball", "wither", "bad_respawn_point",
 			"arrow", "lava", "fall", "drown", "zombie", "skeleton", "wolf", "water", "falling_block");
+	private static final DynamicCommandExceptionType BAD_ID = error(value -> "Invalid action id '" + value + "'");
 	private static final DynamicCommandExceptionType BAD_WORLD = error(value -> "Invalid world '" + value + "'");
 
 	private FilterParser() {
@@ -72,6 +73,7 @@ public final class FilterParser {
 		Set<ActionType> types = new HashSet<>();
 		Set<String> sources = new HashSet<>();
 		Set<String> objects = new HashSet<>();
+		Set<Long> ids = new HashSet<>();
 
 		for (String token : input.trim().split("\\s+")) {
 			int colon = token.indexOf(':');
@@ -102,6 +104,15 @@ public final class FilterParser {
 				case "entity", "e" -> addRegistered(value, BuiltInRegistries.ENTITY_TYPE, UNKNOWN_ENTITY, objects);
 				case "time", "t" -> sinceMillis = nowMillis - parseDuration(value);
 				case "before" -> beforeMillis = nowMillis - parseDuration(value);
+				case "id" -> {
+					for (String id : value.split(",")) {
+						try {
+							ids.add(Long.parseLong(id));
+						} catch (NumberFormatException e) {
+							throw BAD_ID.create(id);
+						}
+					}
+				}
 				case "world", "w" -> {
 					Identifier id = Identifier.tryParse(value.toLowerCase(Locale.ROOT));
 					if (id == null) {
@@ -123,7 +134,7 @@ public final class FilterParser {
 			min = sourcePos.offset(-radius, -radius, -radius);
 			max = sourcePos.offset(radius, radius, radius);
 		}
-		return new ActionFilter(world, min, max, players, sources, types, objects, Math.max(sinceMillis, 0), Math.max(beforeMillis, 0), null);
+		return new ActionFilter(world, min, max, players, sources, types, objects, Math.max(sinceMillis, 0), Math.max(beforeMillis, 0), null, ids);
 	}
 
 	/** Adds each comma-separated identifier in {@code value} to {@code into}, requiring it to exist in {@code registry}. */

@@ -25,7 +25,7 @@ public final class ActionWriter implements AutoCloseable {
 	private static final int MAX_WRITE_ATTEMPTS = 3;
 	private static final int PURGE_CHUNK_SIZE = 10_000;
 
-	// shortcut: unbounded, so a database that stays down grows memory; add a cap + drop counter if that shows up in practice
+	// Unbounded, so a database that stays down grows memory; add a cap + drop counter if that shows up in practice.
 	private final BlockingQueue<ActionRecord> queue = new LinkedBlockingQueue<>();
 	private final Queue<FlagUpdate> flagUpdates = new ConcurrentLinkedQueue<>();
 	private final Queue<Purge> purges = new ConcurrentLinkedQueue<>();

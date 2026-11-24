@@ -153,7 +153,7 @@ public class MeowLogger implements ModInitializer {
 		}
 		nextRetentionRun = now + RETENTION_INTERVAL_MILLIS;
 		retentionRunning = true;
-		ActionFilter expired = new ActionFilter(null, null, null, Set.of(), Set.of(), Set.of(), Set.of(), 0, now - days * DAY_MILLIS, null);
+		ActionFilter expired = new ActionFilter(null, null, null, Set.of(), Set.of(), Set.of(), Set.of(), 0, now - days * DAY_MILLIS, null, Set.of());
 		writer.submitPurge(expired).whenComplete((deleted, error) -> {
 			retentionRunning = false;
 			if (error != null) {

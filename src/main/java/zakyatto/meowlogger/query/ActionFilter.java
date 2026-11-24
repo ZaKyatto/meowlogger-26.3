@@ -23,6 +23,7 @@ import zakyatto.meowlogger.action.ActionType;
  * @param sinceMillis  only actions at or after this epoch-millisecond time; 0 for no limit
  * @param beforeMillis only actions before this epoch-millisecond time; 0 for no limit
  * @param rolledBack  only actions that are (true) or are not (false) currently rolled back, or null for both
+ * @param ids         only the actions with these ids, e.g. from a lookup line's rollback button
  */
 public record ActionFilter(
 		ResourceKey<Level> world,
@@ -34,7 +35,8 @@ public record ActionFilter(
 		Set<String> objects,
 		long sinceMillis,
 		long beforeMillis,
-		Boolean rolledBack
+		Boolean rolledBack,
+		Set<Long> ids
 ) {
 	public ActionFilter {
 		if ((min == null) != (max == null)) {
@@ -48,26 +50,27 @@ public record ActionFilter(
 		sources = Set.copyOf(sources);
 		types = Set.copyOf(types);
 		objects = Set.copyOf(objects);
+		ids = Set.copyOf(ids);
 	}
 
 	/** Filter for every action at exactly one block. */
 	public static ActionFilter at(ResourceKey<Level> world, BlockPos pos) {
-		return new ActionFilter(world, pos, pos, Set.of(), Set.of(), Set.of(), Set.of(), 0, 0, null);
+		return new ActionFilter(world, pos, pos, Set.of(), Set.of(), Set.of(), Set.of(), 0, 0, null, Set.of());
 	}
 
 	/** Copy of this filter restricted to actions that are (or are not) rolled back. */
 	public ActionFilter withRolledBack(boolean value) {
-		return new ActionFilter(world, min, max, players, sources, types, objects, sinceMillis, beforeMillis, value);
+		return new ActionFilter(world, min, max, players, sources, types, objects, sinceMillis, beforeMillis, value, ids);
 	}
 
 	/** Whether this filter matches every action. */
 	public boolean matchesEverything() {
 		return world == null && min == null && players.isEmpty() && sources.isEmpty() && types.isEmpty() && objects.isEmpty()
-				&& sinceMillis <= 0 && beforeMillis <= 0 && rolledBack == null;
+				&& sinceMillis <= 0 && beforeMillis <= 0 && rolledBack == null && ids.isEmpty();
 	}
 
-	/** Whether this filter limits the search by area or player, as rollback and restore require. */
+	/** Whether this filter limits the search by area, player or action ids, as rollback and restore require. */
 	public boolean isScoped() {
-		return min != null || !players.isEmpty();
+		return min != null || !players.isEmpty() || !ids.isEmpty();
 	}
 }
