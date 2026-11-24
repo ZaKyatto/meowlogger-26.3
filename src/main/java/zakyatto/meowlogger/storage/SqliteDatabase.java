@@ -19,6 +19,7 @@ import java.util.stream.Collectors;
 import net.minecraft.commands.arguments.blocks.BlockStateParser;
 import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.resources.ResourceKey;
+import net.minecraft.world.entity.Entity;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.level.block.Block;
 import net.minecraft.world.level.block.state.BlockState;
@@ -212,13 +213,16 @@ public final class SqliteDatabase implements Database {
 				insertAction.setInt(6, record.pos().getX());
 				insertAction.setInt(7, record.pos().getY());
 				insertAction.setInt(8, record.pos().getZ());
-				// Block changes store both blocks; item actions the container and the item; entity actions the entity type twice.
+				// Block changes store both blocks; item actions the container (block or entity type) and the item;
+				// entity actions the entity type twice.
 				boolean entity = record.type().kind() == ActionType.Kind.ENTITY;
-				insertAction.setInt(9, entity ? objectId(record.object()) : objectId(record.oldState().getBlock()));
-				insertAction.setString(10, entity ? null : properties(record.oldState()));
+				insertAction.setInt(9, entity ? objectId(record.object())
+						: record.oldState() != null ? objectId(record.oldState().getBlock())
+						: objectId(record.oldData().getStringOr(Entity.TAG_ID, "minecraft:air")));
+				insertAction.setString(10, record.oldState() == null ? null : properties(record.oldState()));
 				insertAction.setBytes(11, NbtBlobs.compress(record.oldData()));
 				insertAction.setInt(12, record.object() != null ? objectId(record.object()) : objectId(record.newState().getBlock()));
-				insertAction.setString(13, entity ? null : properties(record.newState()));
+				insertAction.setString(13, record.newState() == null ? null : properties(record.newState()));
 				insertAction.setBytes(14, NbtBlobs.compress(record.newData()));
 				insertAction.addBatch();
 			}

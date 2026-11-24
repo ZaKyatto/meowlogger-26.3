@@ -104,6 +104,22 @@ class RollbackTest {
 	}
 
 	@Test
+	void parsesItemActionsOnEntityContainers() {
+		CompoundTag cart = new CompoundTag();
+		cart.putString("id", "minecraft:chest_minecart");
+		ItemData diamonds = new ItemData(new ItemStackTemplate(Items.DIAMOND), 3);
+		LoggedAction theft = new LoggedAction(40, 0, ActionType.ITEM_REMOVE, ActionRecord.PLAYER_SOURCE, "Meow", "minecraft:overworld", 1, 2, 3,
+				"minecraft:chest_minecart", null, SqliteDatabaseAccess.compress(cart), "minecraft:diamond", null,
+				SqliteDatabaseAccess.compress(diamonds.encode(REGISTRIES)), false);
+
+		ParsedAction change = ParsedAction.parseAll(List.of(theft), LongSet.of(), REGISTRIES).changes().getFirst();
+
+		assertEquals(EntityTypes.CHEST_MINECART, change.entity());
+		assertEquals(diamonds, change.items());
+		assertNull(change.oldState());
+	}
+
+	@Test
 	void parsesEntityPlacementsAndChanges() {
 		CompoundTag frame = new CompoundTag();
 		frame.putString("id", "minecraft:item_frame");

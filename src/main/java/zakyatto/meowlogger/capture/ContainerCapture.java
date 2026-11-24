@@ -8,10 +8,14 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 
+import net.minecraft.core.BlockPos;
 import net.minecraft.core.registries.BuiltInRegistries;
+import net.minecraft.nbt.CompoundTag;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.world.CompoundContainer;
 import net.minecraft.world.Container;
+import net.minecraft.world.entity.Entity;
+import net.minecraft.world.entity.vehicle.ContainerEntity;
 import net.minecraft.world.inventory.AbstractContainerMenu;
 import net.minecraft.world.inventory.Slot;
 import net.minecraft.world.item.ItemStack;
@@ -27,14 +31,19 @@ import zakyatto.meowlogger.action.ItemData;
 import zakyatto.meowlogger.mixin.CompoundContainerAccessor;
 
 /**
- * Logs items players put into or take out of block containers (chests, barrels, shulker boxes,
- * furnaces...). Each menu click is bracketed by a snapshot and a diff, so changes are attributed
+ * Logs items players put into or take out of containers: blocks (chests, barrels, shulker boxes,
+ * furnaces...) and entities (chest and hopper minecarts, chest boats). Each menu click is bracketed by a snapshot and a diff, so changes are attributed
  * to exactly the click that caused them; hoppers only run during ticks, never inside a click.
  * Server thread only.
  */
 public final class ContainerCapture {
-	/** A block container that is part of an open menu, with its contents before a click. */
-	public record Tracked(BlockEntity blockEntity, Container container, List<ItemStack> before) {
+	/**
+	 * A container that is part of an open menu, with its contents before a click.
+	 *
+	 * @param blockEntity the container if it is a block, otherwise null
+	 * @param entity      the container if it is an entity, otherwise null
+	 */
+	public record Tracked(BlockEntity blockEntity, Entity entity, Container container, List<ItemStack> before) {
 	}
 
 	private ContainerCapture() {
@@ -60,7 +69,9 @@ public final class ContainerCapture {
 			collect(halves.meowlogger$getContainer1(), seen, tracked);
 			collect(halves.meowlogger$getContainer2(), seen, tracked);
 		} else if (container instanceof BlockEntity blockEntity && blockEntity.getLevel() != null) {
-			tracked.add(new Tracked(blockEntity, container, contents(container)));
+			tracked.add(new Tracked(blockEntity, null, container, contents(container)));
+		} else if (container instanceof ContainerEntity && container instanceof Entity entity) {
+			tracked.add(new Tracked(null, entity, container, contents(container)));
 		}
 	}
 
@@ -72,13 +83,16 @@ public final class ContainerCapture {
 				continue;
 			}
 			BlockEntity blockEntity = tracked.blockEntity();
-			Level level = blockEntity.getLevel();
-			BlockState state = blockEntity.getBlockState();
+			Entity entity = tracked.entity();
+			Level level = blockEntity != null ? blockEntity.getLevel() : entity.level();
+			BlockPos pos = blockEntity != null ? blockEntity.getBlockPos() : entity.blockPosition();
+			BlockState state = blockEntity != null ? blockEntity.getBlockState() : null;
+			CompoundTag container = entity != null ? ItemData.entityContainer(entity) : null;
 			long now = System.currentTimeMillis();
 			changes.forEach((item, change) -> MeowLogger.log(new ActionRecord(now,
 					change > 0 ? ActionType.ITEM_INSERT : ActionType.ITEM_REMOVE, ActionRecord.PLAYER_SOURCE,
-					player.getUUID(), player.getGameProfile().name(), level.dimension(), blockEntity.getBlockPos(),
-					state, null, state, new ItemData(item, Math.abs(change)).encode(level.registryAccess()),
+					player.getUUID(), player.getGameProfile().name(), level.dimension(), pos,
+					state, container, state, new ItemData(item, Math.abs(change)).encode(level.registryAccess()),
 					BuiltInRegistries.ITEM.getKey(item.item().value()).toString())));
 		}
 	}

@@ -3,6 +3,7 @@ package zakyatto.meowlogger.command;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 
 import net.minecraft.nbt.CompoundTag;
+import net.minecraft.nbt.ListTag;
 
 import org.junit.jupiter.api.Test;
 
@@ -27,6 +28,23 @@ class LookupMessagesTest {
 		assertEquals("head: nothing → iron_helmet, mainhand: nothing → othermod:wand",
 				LookupMessages.changeDetail(bareStand, dressedStand));
 		assertEquals("", LookupMessages.changeDetail(bareStand, bareStand.copy()));
+	}
+
+	@Test
+	void describesBlockContentChanges() {
+		CompoundTag emptyLectern = new CompoundTag();
+		CompoundTag lectern = new CompoundTag();
+		lectern.put("Book", item("minecraft:writable_book"));
+		assertEquals("nothing → writable_book", LookupMessages.blockChangeDetail(emptyLectern, lectern));
+
+		CompoundTag shelf = new CompoundTag();
+		ListTag books = new ListTag();
+		books.add(item("minecraft:book"));
+		shelf.put("Items", books);
+		CompoundTag fullerShelf = shelf.copy();
+		fullerShelf.getListOrEmpty("Items").add(item("minecraft:enchanted_book"));
+		assertEquals("1 → 2 items", LookupMessages.blockChangeDetail(shelf, fullerShelf));
+		assertEquals("", LookupMessages.blockChangeDetail(shelf, shelf.copy()));
 	}
 
 	private static CompoundTag item(String id) {

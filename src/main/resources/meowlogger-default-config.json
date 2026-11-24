@@ -9,11 +9,13 @@
 // - The "ignored..." settings only affect new actions; use /ml purge to remove old ones.
 {
   // Kinds of actions not to log. Possible values:
-  //   "block-break"  blocks broken by players, explosions or fire, and buckets filled
-  //   "block-place"  blocks placed, and buckets emptied
-  //   "item-insert"  items put into a container
-  //   "item-remove"  items taken out of a container
-  //   "entity-kill"  mobs killed
+  //   "block-break"    blocks broken by players, explosions or fire (and what pops off with them), buckets filled
+  //   "block-place"    blocks placed, buckets emptied, fires lit
+  //   "block-change"   blocks a player changed by using them: lectern books, jukebox discs, flower pots,
+  //                    decorated pots, chiseled bookshelves, stripped logs, tilled dirt
+  //   "item-insert"    items put into a container (block, or chest minecart / chest boat)
+  //   "item-remove"    items taken out of a container
+  //   "entity-kill"    mobs killed
   //   "entity-break"   armor stands, item frames, paintings, boats and minecarts destroyed
   //   "entity-place"   the same placed by a player
   //   "entity-change"  item frame items and rotation, armor stand equipment changed by a player
@@ -26,7 +28,7 @@
 
   // Causes not to log; this is the purple name in lookups. Examples:
   //   "player"                                  anything a player did directly
-  //   "fire"                                    blocks burning away
+  //   "fire"                                    blocks burning away (credited to whoever lit the fire, if known)
   //   "tnt", "creeper", "end_crystal", "wither" explosions
   //   "arrow", "zombie", "lava", "fall"         what killed a mob or broke a decoration
   //   "meowlogger:support_broken"               item frames and paintings dropping because their wall is gone

@@ -23,6 +23,7 @@ import com.google.gson.JsonPrimitive;
 
 import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.resources.Identifier;
+import net.minecraft.world.entity.Entity;
 import net.minecraft.world.level.block.state.BlockState;
 
 import zakyatto.meowlogger.action.ActionRecord;
@@ -132,7 +133,8 @@ public record MeowConfig(
 		}
 		return switch (record.type().kind()) {
 			case BLOCK -> !ignoredObjects.contains(blockId(record.type() == ActionType.BLOCK_BREAK ? record.oldState() : record.newState()));
-			case ITEM -> !ignoredObjects.contains(record.object()) && !ignoredObjects.contains(blockId(record.oldState()));
+			case ITEM -> !ignoredObjects.contains(record.object()) && !ignoredObjects.contains(record.oldState() != null
+					? blockId(record.oldState()) : record.oldData().getStringOr(Entity.TAG_ID, ""));
 			case ENTITY -> !ignoredObjects.contains(record.object());
 		};
 	}

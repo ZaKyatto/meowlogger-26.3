@@ -23,7 +23,6 @@ public final class DecorationCapture {
 	/** An item frame or painting dropping because the block it hung on is gone. */
 	public static final String SUPPORT_SOURCE = "meowlogger:support_broken";
 
-	private static ServerPlayer actingPlayer;
 	private static int hurtDepth;
 
 	private DecorationCapture() {
@@ -36,23 +35,11 @@ public final class DecorationCapture {
 	}
 
 	/**
-	 * Marks {@code player} as using an item until {@link #endItemUse}, so decorations spawned
-	 * meanwhile (placed armor stands, item frames, boats) are logged as placed by them.
-	 *
-	 * @return the previously acting player, to pass to {@link #endItemUse}
+	 * Called after an entity was added to a world. Decorations added during a player's right-click
+	 * (placed armor stands, item frames, boats) are logged as placed by them.
 	 */
-	public static ServerPlayer beginItemUse(ServerPlayer player) {
-		ServerPlayer previous = actingPlayer;
-		actingPlayer = player;
-		return previous;
-	}
-
-	public static void endItemUse(ServerPlayer previous) {
-		actingPlayer = previous;
-	}
-
-	/** Called after an entity was added to a world. */
 	public static void entityAdded(Entity entity) {
+		ServerPlayer actingPlayer = InteractionCapture.actingPlayer();
 		if (actingPlayer != null && isDecoration(entity)) {
 			EntityCapture.log(ActionType.ENTITY_PLACE, new EntityCapture.Cause(ActionRecord.PLAYER_SOURCE, actingPlayer),
 					entity, null, EntityCapture.save(entity));

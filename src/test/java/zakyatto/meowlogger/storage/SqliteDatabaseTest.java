@@ -220,6 +220,21 @@ class SqliteDatabaseTest {
 	}
 
 	@Test
+	void storesItemActionsOnEntityContainersUnderTheEntityType() throws SQLException {
+		CompoundTag cart = new CompoundTag();
+		cart.putString("id", "minecraft:chest_minecart");
+		CompoundTag items = new CompoundTag();
+		items.putInt("Count", 3);
+		try (SqliteDatabase db = new SqliteDatabase(dir.resolve("cart.sqlite"))) {
+			db.write(List.of(new ActionRecord(1, ActionType.ITEM_REMOVE, ActionRecord.PLAYER_SOURCE, MEOW, "Meow", Level.OVERWORLD, ORIGIN,
+					null, cart, null, items, "minecraft:diamond")));
+			LoggedAction theft = db.lookup(filter(Set.of(), Set.of(), Set.of("minecraft:chest_minecart"), 0), 0, 10).getFirst();
+			assertEquals(List.of("minecraft:chest_minecart", "minecraft:diamond"), List.of(theft.oldObject(), theft.newObject()));
+			assertNull(theft.oldState());
+		}
+	}
+
+	@Test
 	void deletesMatchingActionsInChunks() throws SQLException {
 		try (SqliteDatabase db = new SqliteDatabase(dir.resolve("purge.sqlite"))) {
 			db.write(List.of(

@@ -31,12 +31,14 @@ import zakyatto.meowlogger.storage.NbtBlobs;
 /**
  * A logged action parsed into game objects, ready to be undone or redone on the server thread.
  *
- * @param oldState for item actions, the container's state; null for entity actions
- * @param oldData  for entity actions, the entity's saved data before, or null if it did not exist
+ * @param oldState for item actions, the container's state; null for entity actions and entity containers
+ * @param oldData  for entity actions, the entity's saved data before, or null if it did not exist; for
+ *                 item actions on an entity container, the container's type and UUID
  * @param newData  for entity actions, the entity's saved data after, or null if it no longer exists
  * @param newState for item actions, the container's state; null for entity actions
  * @param items    for item actions, the moved items; otherwise null
- * @param entity   for entity actions, the entity's type; otherwise null
+ * @param entity   for entity actions, the entity's type; for item actions on an entity container, the
+ *                 container's type; otherwise null
  */
 record ParsedAction(long id, ActionType type, ResourceKey<Level> world, BlockPos pos, BlockState oldState, CompoundTag oldData,
 		BlockState newState, CompoundTag newData, ItemData items, EntityType<?> entity) {
@@ -94,11 +96,17 @@ record ParsedAction(long id, ActionType type, ResourceKey<Level> world, BlockPos
 		}
 		BlockPos pos = new BlockPos(action.x(), action.y(), action.z());
 		if (action.type().kind() == ActionType.Kind.ENTITY) {
-			Identifier typeId = Identifier.tryParse(action.oldObject());
-			Optional<EntityType<?>> type = typeId == null ? Optional.empty() : BuiltInRegistries.ENTITY_TYPE.getOptional(typeId);
+			Optional<EntityType<?>> type = entityType(action.oldObject());
 			boolean complete = action.type() == ActionType.ENTITY_CHANGE ? oldData != null && newData != null : oldData != null || newData != null;
 			return type.isEmpty() || !complete ? null
 					: new ParsedAction(action.id(), action.type(), world, pos, null, oldData, null, newData, null, type.get());
+		}
+		if (action.type().kind() == ActionType.Kind.ITEM && oldData != null) {
+			// An item action on an entity container: old_object is its type, old_data identifies it.
+			Optional<EntityType<?>> container = entityType(action.oldObject());
+			Optional<ItemData> items = newData == null ? Optional.empty() : ItemData.decode(newData, registries);
+			return container.isEmpty() || items.isEmpty() ? null
+					: new ParsedAction(action.id(), action.type(), world, pos, null, oldData, null, null, items.get(), container.get());
 		}
 		BlockState oldState = parseState(action.oldObject(), action.oldState(), states);
 		if (oldState == null) {
@@ -113,6 +121,11 @@ record ParsedAction(long id, ActionType type, ResourceKey<Level> world, BlockPos
 		Optional<ItemData> items = newData == null ? Optional.empty() : ItemData.decode(newData, registries);
 		return items.map(moved -> new ParsedAction(action.id(), action.type(), world, pos, oldState, null, oldState, null, moved, null))
 				.orElse(null);
+	}
+
+	private static Optional<EntityType<?>> entityType(String name) {
+		Identifier id = Identifier.tryParse(name);
+		return id == null ? Optional.empty() : BuiltInRegistries.ENTITY_TYPE.getOptional(id);
 	}
 
 	/** Parses {@code object + properties} (e.g. {@code minecraft:oak_stairs[facing=east]}), or returns null if invalid. */

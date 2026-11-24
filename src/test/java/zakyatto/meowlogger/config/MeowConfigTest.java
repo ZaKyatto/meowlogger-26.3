@@ -102,6 +102,10 @@ class MeowConfigTest {
 		assertFalse(config.shouldLog(item(ActionType.ITEM_REMOVE, Blocks.CHEST.defaultBlockState(), "minecraft:coal")));
 		assertFalse(config.shouldLog(new ActionRecord(0, ActionType.ENTITY_KILL, ActionRecord.PLAYER_SOURCE, MEOW, "Meow", Level.OVERWORLD,
 				BlockPos.ZERO, null, new CompoundTag(), null, null, "minecraft:cow")));
+		CompoundTag cart = new CompoundTag();
+		cart.putString("id", "minecraft:furnace_minecart");
+		assertTrue(config.shouldLog(new ActionRecord(0, ActionType.ITEM_INSERT, ActionRecord.PLAYER_SOURCE, MEOW, "Meow", Level.OVERWORLD,
+				BlockPos.ZERO, null, cart, null, new CompoundTag(), "minecraft:coal")), "an entity container is matched by its type");
 		assertTrue(MeowConfig.DEFAULTS.shouldLog(block(ActionType.BLOCK_BREAK, Level.END, "minecraft:fire", grass, air)));
 	}
 

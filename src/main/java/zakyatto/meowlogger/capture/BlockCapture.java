@@ -1,7 +1,10 @@
 package zakyatto.meowlogger.capture;
 
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Set;
+import java.util.UUID;
 
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
@@ -10,9 +13,11 @@ import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.EntityType;
 import net.minecraft.world.entity.LivingEntity;
+import net.minecraft.world.Container;
 import net.minecraft.world.entity.player.Player;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.level.ServerExplosion;
+import net.minecraft.world.level.block.BaseFireBlock;
 import net.minecraft.world.level.block.entity.BlockEntity;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.block.state.properties.BedPart;
@@ -24,8 +29,8 @@ import zakyatto.meowlogger.action.ActionRecord;
 import zakyatto.meowlogger.action.ActionType;
 
 /**
- * Turns block changes into queued {@link ActionRecord}s: player breaks and placements, buckets,
- * explosions and fire. Called from Fabric events and from the mixins in
+ * Turns block changes into queued {@link ActionRecord}s: player breaks and placements (including
+ * blocks that pop off with them), buckets, explosions and fire. Called from Fabric events and from the mixins in
  * {@code zakyatto.meowlogger.mixin}. Server thread only.
  */
 public final class BlockCapture {
@@ -34,9 +39,10 @@ public final class BlockCapture {
 
 	/**
 	 * Blocks captured before a player break. Container contents must be saved before the break, since
-	 * they are dropped during it.
+	 * they are dropped during it. {@code nearby} holds the blocks around it that may pop off with it.
 	 */
-	public record BreakSnapshot(BlockPos pos, BlockState state, CompoundTag data, BlockPos companion, BlockState companionState) {
+	public record BreakSnapshot(BlockPos pos, BlockState state, CompoundTag data, BlockPos companion, BlockState companionState,
+			Snapshot nearby) {
 	}
 
 	/** State captured when {@code BlockItem.placeBlock} succeeds, logged once {@code BlockItem.place} finishes. */
@@ -44,9 +50,18 @@ public final class BlockCapture {
 			BlockPos companion, BlockState companionOldState) {
 	}
 
-	/** Block states (and block entity data) of exploded positions before the explosion. */
-	public record Snapshot(List<BlockPos> positions, List<BlockState> states, List<CompoundTag> data) {
+	/**
+	 * Block states (and block entity data) captured before a change. The first {@code primary} entries
+	 * are the blocks being changed directly; the rest are their neighbours, which are only logged if
+	 * they turned into a different block (popped off or fell) rather than just changing shape.
+	 */
+	public record Snapshot(List<BlockPos> positions, List<BlockState> states, List<CompoundTag> data, int primary) {
 	}
+
+	/** Neighbours a block may hold up: the six around it, plus two above for the top half of a door on it. */
+	private static final BlockPos[] NEARBY = {
+			new BlockPos(1, 0, 0), new BlockPos(-1, 0, 0), new BlockPos(0, 1, 0), new BlockPos(0, -1, 0),
+			new BlockPos(0, 0, 1), new BlockPos(0, 0, -1), new BlockPos(0, 2, 0)};
 
 	private static PendingPlacement pendingPlacement;
 
@@ -57,8 +72,10 @@ public final class BlockCapture {
 	public static BreakSnapshot beforeBreak(Level level, BlockPos pos) {
 		BlockState state = level.getBlockState(pos);
 		BlockPos companion = companion(state, pos);
-		return new BreakSnapshot(pos.immutable(), state, state.hasBlockEntity() ? save(level, level.getBlockEntity(pos)) : null,
-				companion, companion == null ? null : level.getBlockState(companion));
+		BlockPos immutable = pos.immutable();
+		Set<BlockPos> direct = companion == null ? Set.of(immutable) : Set.of(immutable, companion);
+		return new BreakSnapshot(immutable, state, state.hasBlockEntity() ? save(level, level.getBlockEntity(pos)) : null,
+				companion, companion == null ? null : level.getBlockState(companion), snapshot(level, List.of(), direct));
 	}
 
 	/**
@@ -72,6 +89,8 @@ public final class BlockCapture {
 			logIfChanged(ActionType.BLOCK_BREAK, ActionRecord.PLAYER_SOURCE, player, level,
 					snapshot.companion(), snapshot.companionState(), null);
 		}
+		logSnapshot(ActionRecord.PLAYER_SOURCE, player == null ? null : player.getUUID(),
+				player == null ? null : player.getGameProfile().name(), level, snapshot.nearby());
 	}
 
 	/** Called when a player's {@code BlockItem.placeBlock} succeeded; completed by {@link #finishPlacement}. */
@@ -116,25 +135,67 @@ public final class BlockCapture {
 		log(type, ActionRecord.PLAYER_SOURCE, player, level, pos, oldState, null, newState, null);
 	}
 
-	/** Logs a block that fire burned away or replaced with fire. */
-	public static void logBurn(Level level, BlockPos pos, BlockState oldState, CompoundTag oldData) {
-		logIfChanged(ActionType.BLOCK_BREAK, FIRE_SOURCE, null, level, pos, oldState, oldData);
+	/**
+	 * Logs a block that fire burned away or replaced with fire, crediting whoever lit the fire.
+	 *
+	 * @param igniterId   UUID of the player who lit the fire this spread from, or null if unknown
+	 * @param igniterName that player's name, or null
+	 */
+	public static void logBurn(Level level, BlockPos pos, BlockState oldState, CompoundTag oldData, UUID igniterId, String igniterName) {
+		BlockState newState = level.getBlockState(pos);
+		if (newState != oldState) {
+			log(ActionType.BLOCK_BREAK, FIRE_SOURCE, igniterId, igniterName, level, pos, oldState, oldData, newState,
+					newState.hasBlockEntity() ? save(level, level.getBlockEntity(pos)) : null);
+		}
 	}
 
-	/** Captures the blocks an explosion is about to destroy. */
+	/** Logs fire spreading into an empty space, crediting whoever lit the fire it spread from. */
+	public static void logSpread(Level level, BlockPos pos, BlockState oldState, UUID igniterId, String igniterName) {
+		log(ActionType.BLOCK_PLACE, FIRE_SOURCE, igniterId, igniterName, level, pos, oldState, null, level.getBlockState(pos), null);
+	}
+
+	/** Captures the blocks an explosion is about to destroy, and the blocks around them that may pop off. */
 	public static Snapshot snapshot(Level level, List<BlockPos> positions) {
+		return snapshot(level, positions, Set.of());
+	}
+
+	/**
+	 * Captures {@code positions} (skipping air), then the neighbours of those and of {@code alsoAround}
+	 * that are in neither. Neighbours are only captured if they could pop off (not solid full blocks,
+	 * air or fire), and their contents are not saved if they are containers, which never pop off.
+	 */
+	private static Snapshot snapshot(Level level, List<BlockPos> positions, Set<BlockPos> alsoAround) {
 		List<BlockPos> kept = new ArrayList<>(positions.size());
 		List<BlockState> states = new ArrayList<>(positions.size());
 		List<CompoundTag> data = new ArrayList<>(positions.size());
+		Set<BlockPos> covered = new HashSet<>(alsoAround);
 		for (BlockPos pos : positions) {
 			BlockState state = level.getBlockState(pos);
+			covered.add(pos.immutable());
 			if (!state.isAir()) {
 				kept.add(pos.immutable());
 				states.add(state);
 				data.add(state.hasBlockEntity() ? save(level, level.getBlockEntity(pos)) : null);
 			}
 		}
-		return new Snapshot(kept, states, data);
+		int primary = kept.size();
+		for (BlockPos center : new ArrayList<>(covered)) {
+			for (BlockPos offset : NEARBY) {
+				BlockPos pos = center.offset(offset);
+				if (!covered.add(pos)) {
+					continue;
+				}
+				BlockState state = level.getBlockState(pos);
+				if (state.isAir() || state.getBlock() instanceof BaseFireBlock || state.isCollisionShapeFullBlock(level, pos)) {
+					continue;
+				}
+				BlockEntity blockEntity = state.hasBlockEntity() ? level.getBlockEntity(pos) : null;
+				kept.add(pos);
+				states.add(state);
+				data.add(blockEntity == null || blockEntity instanceof Container ? null : save(level, blockEntity));
+			}
+		}
+		return new Snapshot(kept, states, data, primary);
 	}
 
 	/**
@@ -149,9 +210,21 @@ public final class BlockCapture {
 				: explosion.getDamageSource().typeHolder().getRegisteredName();
 		LivingEntity indirect = explosion.getIndirectSourceEntity();
 		Player player = indirect instanceof ServerPlayer serverPlayer ? serverPlayer : null;
+		logSnapshot(source, player == null ? null : player.getUUID(), player == null ? null : player.getGameProfile().name(),
+				explosion.level(), snapshot);
+	}
+
+	/** Logs every primary snapshot entry that changed, and every neighbour that became a different block. */
+	private static void logSnapshot(String source, UUID playerId, String playerName, Level level, Snapshot snapshot) {
 		for (int i = 0; i < snapshot.positions().size(); i++) {
-			logIfChanged(ActionType.BLOCK_BREAK, source, player, explosion.level(), snapshot.positions().get(i),
-					snapshot.states().get(i), snapshot.data().get(i));
+			BlockPos pos = snapshot.positions().get(i);
+			BlockState oldState = snapshot.states().get(i);
+			BlockState newState = level.getBlockState(pos);
+			boolean changed = i < snapshot.primary() ? newState != oldState : newState.getBlock() != oldState.getBlock();
+			if (changed) {
+				log(ActionType.BLOCK_BREAK, source, playerId, playerName, level, pos, oldState, snapshot.data().get(i), newState,
+						newState.hasBlockEntity() ? save(level, level.getBlockEntity(pos)) : null);
+			}
 		}
 	}
 
@@ -169,10 +242,17 @@ public final class BlockCapture {
 		}
 	}
 
-	private static void log(ActionType type, String source, Player player, Level level, BlockPos pos,
+	/** Logs a block change. {@code player} may be null. */
+	public static void log(ActionType type, String source, Player player, Level level, BlockPos pos,
 			BlockState oldState, CompoundTag oldData, BlockState newState, CompoundTag newData) {
-		MeowLogger.log(new ActionRecord(System.currentTimeMillis(), type, source,
-				player == null ? null : player.getUUID(), player == null ? null : player.getGameProfile().name(),
+		log(type, source, player == null ? null : player.getUUID(), player == null ? null : player.getGameProfile().name(),
+				level, pos, oldState, oldData, newState, newData);
+	}
+
+	private static void log(ActionType type, String source, UUID playerId, String playerName, Level level, BlockPos pos,
+			BlockState oldState, CompoundTag oldData, BlockState newState, CompoundTag newData) {
+		InteractionCapture.markLogged(pos);
+		MeowLogger.log(new ActionRecord(System.currentTimeMillis(), type, source, playerId, playerName,
 				level.dimension(), pos, oldState, oldData, newState, newData, null));
 	}
 }

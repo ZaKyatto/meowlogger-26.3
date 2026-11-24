@@ -156,19 +156,23 @@ final class RollbackTask {
 		BlockState target = restore ? change.newState() : change.oldState();
 		level.setBlock(change.pos(), target, FLAGS);
 		CompoundTag data = restore ? change.newData() : change.oldData();
-		if (data != null) {
-			BlockEntity blockEntity = level.getBlockEntity(change.pos());
+		BlockState placed = level.getBlockState(change.pos());
+		if (data != null && placed.hasBlockEntity()) {
+			// A fresh block entity rather than loading into the existing one, which would keep anything
+			// the data doesn't mention (e.g. a jukebox's disc when restoring it empty).
+			BlockEntity blockEntity = BlockEntity.loadStatic(change.pos(), placed, data, level.registryAccess());
 			if (blockEntity != null) {
-				blockEntity.loadWithComponents(TagValueInput.create(ProblemReporter.DISCARDING, level.registryAccess(), data));
+				level.setBlockEntity(blockEntity);
 				blockEntity.setChanged();
-				level.sendBlockUpdated(change.pos(), target, target, Block.UPDATE_CLIENTS);
+				level.sendBlockUpdated(change.pos(), placed, placed, Block.UPDATE_CLIENTS);
 			}
 		}
 	}
 
 	/** Undoing a removal or redoing an insertion puts the items back; the other two take them out. */
 	private boolean moveItems(ServerLevel level, ParsedAction change) {
-		if (!(level.getBlockEntity(change.pos()) instanceof Container container)) {
+		Object holder = change.entity() != null ? find(level, change.entity(), change.oldData()) : level.getBlockEntity(change.pos());
+		if (!(holder instanceof Container container)) {
 			return false;
 		}
 		boolean add = (change.type() == ActionType.ITEM_REMOVE) != restore;

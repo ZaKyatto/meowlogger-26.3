@@ -21,6 +21,7 @@ import org.slf4j.LoggerFactory;
 
 import zakyatto.meowlogger.action.ActionRecord;
 import zakyatto.meowlogger.capture.EntityCapture;
+import zakyatto.meowlogger.capture.FireCapture;
 import zakyatto.meowlogger.command.Inspector;
 import zakyatto.meowlogger.command.Lookups;
 import zakyatto.meowlogger.command.MeowCommands;
@@ -56,6 +57,7 @@ public class MeowLogger implements ModInitializer {
 		ServerLifecycleEvents.SERVER_STOPPED.register(server -> stop());
 		ServerTickEvents.END_SERVER_TICK.register(server -> applyRetention());
 		EntityCapture.register();
+		FireCapture.register();
 		MeowCommands.register();
 		Purges.register();
 		Lookups.register();

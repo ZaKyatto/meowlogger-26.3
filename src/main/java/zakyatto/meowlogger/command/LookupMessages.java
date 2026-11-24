@@ -37,6 +37,8 @@ final class LookupMessages {
 	private static final DateTimeFormatter TIMESTAMP =
 			DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss z").withZone(ZoneId.systemDefault());
 	private static final String DEFAULT_NAMESPACE = "minecraft:";
+	/** Block entity keys holding a single item: lectern book, jukebox disc, decorated pot contents. */
+	private static final List<String> SINGLE_ITEM_KEYS = List.of("Book", "RecordItem", "item");
 
 	private LookupMessages() {
 	}
@@ -66,7 +68,7 @@ final class LookupMessages {
 			case ENTITY_KILL -> Component.literal("killed").withStyle(ChatFormatting.RED);
 			case ENTITY_BREAK -> Component.literal("broke").withStyle(ChatFormatting.RED);
 			case ENTITY_PLACE -> Component.literal("placed").withStyle(ChatFormatting.GREEN);
-			case ENTITY_CHANGE -> Component.literal("changed").withStyle(ChatFormatting.GOLD);
+			case ENTITY_CHANGE, BLOCK_CHANGE -> Component.literal("changed").withStyle(ChatFormatting.GOLD);
 		};
 		Component what = switch (action.type()) {
 			case BLOCK_BREAK -> block(action.oldObject(), action);
@@ -75,6 +77,17 @@ final class LookupMessages {
 					.append(items(action, registries))
 					.append(Component.literal(action.type() == ActionType.ITEM_INSERT ? " to " : " from ").withStyle(ChatFormatting.GRAY))
 					.append(Component.literal(shortName(action.oldObject())).withStyle(ChatFormatting.YELLOW));
+			case BLOCK_CHANGE -> {
+				MutableComponent text = Component.empty();
+				if (!action.oldObject().equals(action.newObject())) {
+					text.append(block(action.oldObject(), action)).append(Component.literal(" → ").withStyle(ChatFormatting.GRAY));
+				}
+				text.append(block(action.newObject(), action));
+				CompoundTag before = decompress(action.oldData(), null);
+				CompoundTag after = decompress(action.newData(), null);
+				String detail = before == null || after == null ? "" : blockChangeDetail(before, after);
+				yield text.append(Component.literal(detail.isEmpty() ? "" : " (" + detail + ")").withStyle(ChatFormatting.GRAY));
+			}
 			case ENTITY_KILL, ENTITY_BREAK, ENTITY_PLACE -> entity(action, decompress(action.oldData(), action.newData()), registries);
 			case ENTITY_CHANGE -> {
 				CompoundTag before = decompress(action.oldData(), null);
@@ -188,6 +201,28 @@ final class LookupMessages {
 		}
 		if (parts.isEmpty() && before.getByteOr("ItemRotation", (byte) 0) != after.getByteOr("ItemRotation", (byte) 0)) {
 			parts.add("rotated");
+		}
+		return String.join(", ", parts);
+	}
+
+	/**
+	 * Describes what changed inside a block between two saves of its block entity: a lectern's book,
+	 * a jukebox's disc or a pot's item ({@code nothing → writable_book}), or the number of items in
+	 * a chiseled bookshelf or campfire ({@code 2 → 3 items}). Empty if none of those changed.
+	 */
+	static String blockChangeDetail(CompoundTag before, CompoundTag after) {
+		List<String> parts = new ArrayList<>();
+		for (String key : SINGLE_ITEM_KEYS) {
+			String oldItem = itemName(before.getCompoundOrEmpty(key));
+			String newItem = itemName(after.getCompoundOrEmpty(key));
+			if (!oldItem.equals(newItem)) {
+				parts.add(oldItem + " → " + newItem);
+			}
+		}
+		int oldCount = before.getListOrEmpty("Items").size();
+		int newCount = after.getListOrEmpty("Items").size();
+		if (oldCount != newCount) {
+			parts.add(oldCount + " → " + newCount + " items");
 		}
 		return String.join(", ", parts);
 	}

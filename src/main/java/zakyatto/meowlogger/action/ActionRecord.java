@@ -20,9 +20,11 @@ import net.minecraft.world.level.block.state.BlockState;
  * @param playerName name of the responsible player at the time of the action, or null if none
  * @param world      dimension the action happened in
  * @param pos        affected block position; for entity actions, the block the entity was in
- * @param oldState   block state before the action; for item actions, the container's state; null for entity actions
+ * @param oldState   block state before the action; for item actions, the container's state; null for entity
+ *                   actions and for item actions on an entity container
  * @param oldData    block entity data before the action (e.g. chest contents), or null if none; for
- *                   entity actions, the entity's saved data before, or null if it did not exist
+ *                   entity actions, the entity's saved data before, or null if it did not exist; for
+ *                   item actions on an entity container, {@link ItemData#entityContainer}
  * @param newState   block state after the action; for item actions, the container's state; null for entity actions
  * @param newData    block entity data after the action, or null if none; for item actions, the
  *                   moved items as written by {@link ItemData#encode}; for entity actions, the
@@ -51,7 +53,10 @@ public record ActionRecord(
 		if ((playerId == null) != (playerName == null)) {
 			throw new IllegalArgumentException("playerId and playerName must both be set or both be null");
 		}
-		boolean entity = type.kind() == ActionType.Kind.ENTITY;
+		// Entity actions have no block states; item actions on an entity container (a chest minecart)
+		// have none either, and identify the container by their old data instead.
+		boolean entity = type.kind() == ActionType.Kind.ENTITY
+				|| type.kind() == ActionType.Kind.ITEM && oldState == null && newState == null && oldData != null;
 		if ((type.kind() == ActionType.Kind.BLOCK) == (object != null)) {
 			throw new IllegalArgumentException("object must be set exactly for item and entity actions");
 		}

@@ -3,9 +3,12 @@ package zakyatto.meowlogger.action;
 import java.util.Optional;
 
 import net.minecraft.core.HolderLookup;
+import net.minecraft.core.UUIDUtil;
 import net.minecraft.nbt.CompoundTag;
 import net.minecraft.nbt.NbtOps;
 import net.minecraft.nbt.Tag;
+import net.minecraft.world.entity.Entity;
+import net.minecraft.world.entity.EntityType;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.ItemStackTemplate;
 
@@ -32,6 +35,17 @@ public record ItemData(ItemStackTemplate item, int count) {
 		CompoundTag tag = new CompoundTag();
 		tag.put(ITEM_KEY, ItemStackTemplate.CODEC.encodeStart(registries.createSerializationContext(NbtOps.INSTANCE), item).getOrThrow());
 		tag.putInt(COUNT_KEY, count);
+		return tag;
+	}
+
+	/**
+	 * Identifies an entity container (a chest minecart, chest boat) for an item action: its type and
+	 * UUID, stored as the action's old data in place of a container block.
+	 */
+	public static CompoundTag entityContainer(Entity entity) {
+		CompoundTag tag = new CompoundTag();
+		tag.putString(Entity.TAG_ID, EntityType.getKey(entity.getType()).toString());
+		tag.store(Entity.TAG_UUID, UUIDUtil.CODEC, entity.getUUID());
 		return tag;
 	}
 

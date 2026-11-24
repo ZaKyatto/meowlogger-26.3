@@ -20,7 +20,12 @@ public enum ActionType {
 	/** A player placed an armor stand, item frame, painting, boat or minecart. */
 	ENTITY_PLACE(7, "entity-place", Kind.ENTITY),
 	/** A player changed an item frame's item or rotation, or an armor stand's equipment. */
-	ENTITY_CHANGE(8, "entity-change", Kind.ENTITY);
+	ENTITY_CHANGE(8, "entity-change", Kind.ENTITY),
+	/**
+	 * A player changed a block by using it, without placing or breaking it: a book put on a lectern,
+	 * a disc into a jukebox, a plant into a flower pot, a log stripped, dirt tilled.
+	 */
+	BLOCK_CHANGE(9, "block-change", Kind.BLOCK);
 
 	/** What an action changes, which decides how it is stored and rolled back. */
 	public enum Kind {

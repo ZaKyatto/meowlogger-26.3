@@ -8,11 +8,13 @@ client mod is needed.
 
 | Action | Source | Player |
 |---|---|---|
-| Breaking and placing blocks, including both halves of doors, beds and tall plants | `player` | the player |
+| Breaking and placing blocks, including both halves of doors, beds and tall plants, and blocks that pop off with them (torches, rails, signs) | `player` | the player |
+| Changing a block by using it: books on lecterns, discs in jukebox, flower pots, decorated pots, chiseled bookshelves, stripping logs, tilling dirt | `player` | the player |
+| Lighting fires with flint and steel or fire charges | `player` | the player |
 | Emptying and filling buckets | `player` | the player |
-| Blocks destroyed by explosions | the exploding entity, e.g. `tnt`, `creeper`, `end_crystal` | whoever lit or caused it, if known |
-| Blocks burnt by fire | `fire` | none |
-| Items put into or taken out of chests, barrels, shulker boxes, furnaces and other block containers | `player` | the player |
+| Blocks destroyed by explosions, and blocks that pop off with them | the exploding entity, e.g. `tnt`, `creeper`, `end_crystal` | whoever lit or caused it, if known |
+| Blocks burnt by fire | `fire` | whoever lit the fire, if a player did |
+| Items put into or taken out of chests, barrels, shulker boxes, furnaces and other block containers, and chest or hopper minecarts and chest boats | `player` | the player |
 | Animals, villagers, pets and other non-hostile mobs dying, plus name-tagged hostile mobs | `player`, the weapon (e.g. `arrow`), the attacking mob, or the cause (e.g. `lava`, `fall`) | the killer, if a player |
 | Armor stands, item frames, paintings, boats and minecarts placed or broken | `player`, the weapon or explosion, or `meowlogger:support_broken` when the block a frame or painting hung on is gone | the player, if any |
 | Items put into, taken out of or rotated in item frames, and armor stand equipment swapped | `player` | the player |
@@ -31,8 +33,8 @@ Decorations work the same way: rolling back a break brings the armor stand, fram
 vehicle back with its contents, rolling back a placement removes it, and rolling back a change puts
 the old item or equipment back.
 
-Not logged yet: water and lava flow (including cobblestone and obsidian it creates), and books put
-into lecterns or chiseled bookshelves.
+Not logged yet: water and lava flow (including cobblestone and obsidian it creates), sand and
+gravel falling, and signs edited after placing them.
 
 ## Usage
 
@@ -62,7 +64,7 @@ Lookup parameters can be combined; lists are comma-separated:
 | `radius:` / `r:` | `r:10` | Within 10 blocks of you (up to `maxRadius`, 1000 by default), in your current world |
 | `player:` / `p:` | `p:Steve,Alex` | Actions these players did or caused (e.g. TNT they lit) |
 | `source:` / `s:` | `s:creeper,tnt` | Actions with this cause (`player`, `fire`, an entity such as `creeper`) |
-| `action:` / `a:` | `a:item-remove` | `block-break`, `block-place`, `item-insert`, `item-remove`, `entity-kill`, `entity-break`, `entity-place`, `entity-change` |
+| `action:` / `a:` | `a:item-remove` | `block-break`, `block-place`, `block-change`, `item-insert`, `item-remove`, `entity-kill`, `entity-break`, `entity-place`, `entity-change` |
 | `block:` / `b:` | `b:diamond_ore` | Actions involving this block (before or after), or this container |
 | `item:` / `i:` | `i:diamond` | Item actions moving this item |
 | `entity:` / `e:` | `e:cow,armor_stand` | Actions on this kind of mob, decoration or vehicle |

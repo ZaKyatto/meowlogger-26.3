@@ -18,11 +18,12 @@ import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.Shadow;
 
 import zakyatto.meowlogger.capture.BlockCapture;
-import zakyatto.meowlogger.capture.DecorationCapture;
+import zakyatto.meowlogger.capture.InteractionCapture;
 
 /**
  * Wraps player block breaking, since Fabric's after-break event misses blocks removed as a side
- * effect, and item use, so decorations it spawns are credited to the player.
+ * effect, and right-clicks, so what they change (the clicked block, placed decorations, fires lit)
+ * is credited to the player.
  */
 @Mixin(ServerPlayerGameMode.class)
 public abstract class ServerPlayerGameModeMixin {
@@ -44,22 +45,22 @@ public abstract class ServerPlayerGameModeMixin {
 	@WrapMethod(method = "useItem")
 	private InteractionResult meowlogger$trackItemUse(ServerPlayer player, Level level, ItemStack stack, InteractionHand hand,
 			Operation<InteractionResult> original) {
-		ServerPlayer previous = DecorationCapture.beginItemUse(player);
+		InteractionCapture.Use use = InteractionCapture.beforeUse(player, level, null);
 		try {
 			return original.call(player, level, stack, hand);
 		} finally {
-			DecorationCapture.endItemUse(previous);
+			InteractionCapture.afterUse(use);
 		}
 	}
 
 	@WrapMethod(method = "useItemOn")
 	private InteractionResult meowlogger$trackItemUseOn(ServerPlayer player, Level level, ItemStack stack, InteractionHand hand,
 			BlockHitResult hit, Operation<InteractionResult> original) {
-		ServerPlayer previous = DecorationCapture.beginItemUse(player);
+		InteractionCapture.Use use = InteractionCapture.beforeUse(player, level, hit.getBlockPos());
 		try {
 			return original.call(player, level, stack, hand, hit);
 		} finally {
-			DecorationCapture.endItemUse(previous);
+			InteractionCapture.afterUse(use);
 		}
 	}
 }
