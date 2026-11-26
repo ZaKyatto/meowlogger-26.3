@@ -7,6 +7,10 @@
 	"authors": [
 		"ZaKyatto"
 	],
+	"contact": {
+		"homepage": "https://modrinth.com/mod/meowlogger",
+		"issues": "https://discord.com/users/1113484634072813719"
+	},
 	"license": "MIT",
 	"icon": "assets/meowlogger/icon.png",
 	"environment": "*",
